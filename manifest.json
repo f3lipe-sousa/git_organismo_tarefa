@@ -2,19 +2,14 @@
   "id": "./",
   "name": "Organismo de Tarefas",
   "short_name": "Organismo",
-  "description": "Um fluxo vivo para organizar tarefas, dependências e histórico de conclusões.",
+  "description": "Organize tarefas, dependências e histórico de conclusões.",
   "lang": "pt-BR",
-  "dir": "ltr",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "orientation": "any",
   "background_color": "#05060a",
   "theme_color": "#05060a",
-  "categories": [
-    "productivity",
-    "utilities"
-  ],
+  "categories": ["productivity", "utilities"],
   "icons": [
     {
       "src": "./icon-192.png",

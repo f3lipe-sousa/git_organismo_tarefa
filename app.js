@@ -1,208 +1,234 @@
 (function () {
   "use strict";
 
-  const { Store, CENTER, WORLD, SEDIMENT_TOP } = window.TaskCore;
+  const {
+    Store,
+    WORLD,
+    CENTER,
+    TYPES,
+    getBounds,
+    setWorldBounds
+  } = window.TaskCore;
 
-  /* =====================================================================
-     TOASTS
-  ===================================================================== */
-  function toast(msg, type) {
-    const el = document.createElement("div");
-    el.className = "toast" + (type ? " " + type : "");
-    el.textContent = msg;
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const $ = id => document.getElementById(id);
 
-    document.getElementById("toasts").appendChild(el);
+  const listView = $("listView");
+  const orgWrap = $("organismWrap");
+  const svg = $("organism");
+  const camera = $("camera");
+  const overlay = $("overlay");
+  const historyPanel = $("historyPanel");
 
-    requestAnimationFrame(() => el.classList.add("show"));
+  let currentView = "list";
+  let modalState = null;
+  let pendingConnectId = null;
+  let drag = null;
+  let pan = null;
+  let lastTap = null;
+  let lastInteraction = Date.now();
+  let paused = false;
+  let speed = 1;
+  let engineRunning = false;
+  let rafId = null;
+  let autosaveTimer = null;
+
+  const runtime = new Map();
+  const cam = { x: CENTER.x, y: CENTER.y, scale: 1 };
+
+  function toast(message, type = "") {
+    const element = document.createElement("div");
+    element.className = "toast" + (type ? " " + type : "");
+    element.textContent = message;
+    $("toasts").appendChild(element);
+
+    requestAnimationFrame(() => element.classList.add("show"));
 
     setTimeout(() => {
-      el.classList.remove("show");
-      setTimeout(() => el.remove(), 300);
+      element.classList.remove("show");
+      setTimeout(() => element.remove(), 300);
     }, 3200);
   }
 
-  /* =====================================================================
-     VIEW SWITCH
-  ===================================================================== */
-  const listView = document.getElementById("listView");
-  const orgWrap = document.getElementById("organismWrap");
-  const toListBtn = document.getElementById("toListBtn");
-  const toOrgBtn = document.getElementById("toOrgBtn");
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, character => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    })[character]);
+  }
 
-  let currentView = "list";
+  function showHint(message) {
+    $("hintBar").textContent = message;
+    $("hintBar").classList.toggle("show", !!message);
+  }
+
+  function clearConnection() {
+    pendingConnectId = null;
+    showHint("");
+  }
 
   function switchView(view) {
-    currentView = view;
+    if (view === currentView) return;
 
+    currentView = view;
     listView.classList.toggle("active", view === "list");
     orgWrap.classList.toggle("active", view === "organism");
-    toListBtn.classList.toggle("active", view === "list");
-    toOrgBtn.classList.toggle("active", view === "organism");
+    $("toListBtn").classList.toggle("active", view === "list");
+    $("toOrgBtn").classList.toggle("active", view === "organism");
 
     if (view === "organism") {
       requestAnimationFrame(() => {
-        resizeOrganismViewport();
+        if (currentView !== "organism") return;
+
+        resizeViewport();
         renderOrganism();
         startEngine();
       });
     } else {
       stopEngine();
+      clearConnection();
       renderList();
     }
   }
 
-  toListBtn.addEventListener("click", () => switchView("list"));
-  toOrgBtn.addEventListener("click", () => switchView("organism"));
-
-  /* =====================================================================
-     VISÃO EM LISTA
-  ===================================================================== */
-  const treeRoot = document.getElementById("treeRoot");
+  $("toListBtn").addEventListener("click", () => switchView("list"));
+  $("toOrgBtn").addEventListener("click", () => switchView("organism"));
 
   function renderList() {
-    treeRoot.innerHTML = "";
+    const root = $("treeRoot");
+    root.replaceChildren();
 
     const roots = Store.getRootTasks();
 
-    if (roots.length === 0) {
-      treeRoot.innerHTML =
-        '<div class="emptyState">Nenhuma tarefa ativa. Crie a primeira com "+ Nova tarefa".</div>';
+    if (!roots.length) {
+      root.innerHTML =
+        '<div class="emptyState">Nenhuma tarefa ativa. Toque em + para criar uma.</div>';
       return;
     }
 
-    const ul = document.createElement("ul");
-    ul.className = "tree top";
+    const list = document.createElement("ul");
+    list.className = "tree top";
 
     const visited = new Set();
-
-    roots.forEach((task) => {
-      ul.appendChild(buildNode(task, visited));
-    });
-
-    treeRoot.appendChild(ul);
+    roots.forEach(task => list.appendChild(buildNode(task, visited)));
+    root.appendChild(list);
   }
 
   function buildNode(task, visited) {
-    const li = document.createElement("li");
-    li.className = "node-row";
+    const item = document.createElement("li");
+    item.className = "node-row";
 
     if (visited.has(task.id)) {
-      li.innerHTML =
-        '<div class="card"><div class="body"><span class="kw" style="color:var(--text-faint)">↺ ' +
+      item.innerHTML =
+        '<div class="card duplicate"><div class="body">↺ ' +
         escapeHtml(task.keyword) +
-        " (já exibida acima)</span></div></div>";
-
-      return li;
+        " (já exibida acima)</div></div>";
+      return item;
     }
 
     visited.add(task.id);
 
-    const weight = Store.getWeight(task.id);
+    const parents = Store.getParents(task.id);
     const card = document.createElement("div");
-
     card.className = "card";
 
     card.innerHTML = `
-      <div class="weightPip">${weight}</div>
-
+      <span class="weightPip" title="Pré-requisitos acumulados">${Store.getWeight(task.id)}</span>
       <div class="body">
-        <div class="kw">${escapeHtml(task.keyword)}</div>
-
-        ${
-          task.description
-            ? '<div class="desc">' + escapeHtml(task.description) + "</div>"
-            : ""
-        }
-
-        <div class="meta">
-          ${Store.getParents(task.id).length} pré-requisito(s) diretos
+        <div class="cardHeading">
+          <span class="kw">${escapeHtml(task.keyword)}</span>
+          <span class="typeTag">${escapeHtml(TYPES[task.type] || TYPES.pessoal)}</span>
         </div>
+        ${task.description
+          ? `<div class="desc">${escapeHtml(task.description)}</div>`
+          : ""}
+        <div class="meta">${parents.length} pré-requisito(s) direto(s)</div>
       </div>
-
       <div class="actions">
-        <button class="iconBtn complete" title="Concluir" data-act="complete">✓</button>
-        <button class="iconBtn" title="Editar" data-act="edit">✎</button>
-        <button class="iconBtn" title="Adicionar pré-requisito" data-act="addprereq">＋</button>
-        <button class="iconBtn del" title="Excluir" data-act="del">✕</button>
+        <button class="iconBtn complete" type="button" title="Concluir" aria-label="Concluir" data-act="complete">✓</button>
+        <button class="iconBtn" type="button" title="Editar" aria-label="Editar" data-act="edit">✎</button>
+        <button class="iconBtn" type="button" title="Adicionar pré-requisito" aria-label="Adicionar pré-requisito" data-act="add">＋</button>
+        <button class="iconBtn del" type="button" title="Excluir" aria-label="Excluir" data-act="delete">✕</button>
       </div>
     `;
 
-    const parents = Store.getParents(task.id);
-    const canComplete = parents.every((parent) => parent.completed);
+    const completeButton =
+      card.querySelector('[data-act="complete"]');
 
-    const completeBtn = card.querySelector('[data-act="complete"]');
-
-    if (!canComplete) {
-      completeBtn.disabled = true;
-      completeBtn.title = "Conclua os pré-requisitos primeiro";
+    if (parents.some(parent => !parent.completed)) {
+      completeButton.disabled = true;
+      completeButton.title =
+        "Conclua os pré-requisitos primeiro";
     }
 
-    card
-      .querySelector('[data-act="complete"]')
-      .addEventListener("click", () => doComplete(task.id));
+    completeButton.addEventListener(
+      "click",
+      () => doComplete(task.id)
+    );
 
-    card
-      .querySelector('[data-act="edit"]')
-      .addEventListener("click", () =>
-        openModal({
-          mode: "edit",
-          task,
-        })
-      );
-
-    card
-      .querySelector('[data-act="addprereq"]')
-      .addEventListener("click", () =>
-        openModal({
-          mode: "create",
-          prereqOfId: task.id,
-          prereqOfLabel: task.keyword,
-        })
-      );
-
-    card.querySelector('[data-act="del"]').addEventListener("click", () => {
-      if (
-        confirm(
-          'Excluir "' + task.keyword + '"? Isso remove suas conexões.'
-        )
-      ) {
-        Store.deleteTask(task.id);
-        toast("Tarefa excluída.");
-        renderList();
-      }
-    });
-
-    li.appendChild(card);
-
-    const kids = Store.getParents(task.id);
-
-    if (kids.length) {
-      const ul = document.createElement("ul");
-      ul.className = "tree";
-
-      kids.forEach((kid) => {
-        ul.appendChild(buildNode(kid, visited));
+    card.querySelector('[data-act="edit"]')
+      .addEventListener("click", () => {
+        openModal({ mode: "edit", taskId: task.id });
       });
 
-      li.appendChild(ul);
+    card.querySelector('[data-act="add"]')
+      .addEventListener("click", () => {
+        openModal({ mode: "create", prereqOfId: task.id });
+      });
+
+    card.querySelector('[data-act="delete"]')
+      .addEventListener("click", () => {
+        if (!confirm(
+          `Excluir "${task.keyword}"? Isso removerá suas conexões.`
+        )) {
+          return;
+        }
+
+        Store.deleteTask(task.id);
+
+        if (pendingConnectId === task.id) {
+          clearConnection();
+        }
+
+        runtime.delete(task.id);
+        toast("Tarefa excluída.");
+        renderList();
+        renderHistory();
+      });
+
+    item.appendChild(card);
+
+    if (parents.length) {
+      const children = document.createElement("ul");
+      children.className = "tree";
+
+      parents.forEach(parent => {
+        children.appendChild(buildNode(parent, visited));
+      });
+
+      item.appendChild(children);
     }
 
-    return li;
+    return item;
   }
 
   function doComplete(id) {
-    const res = Store.toggleComplete(id);
+    const result = Store.toggleComplete(id);
 
-    if (!res.ok) {
-      if (res.reason === "blocked") {
-        toast("Conclua antes os pré-requisitos diretos.", "warn");
+    if (!result.ok) {
+      if (result.reason === "blocked") {
+        toast("Conclua antes os pré-requisitos.", "warn");
       }
-
       return;
     }
 
-    toast("Tarefa concluída — depositada no sedimento.");
+    if (pendingConnectId === id) clearConnection();
 
+    runtime.delete(id);
+    toast("Tarefa concluída — depositada no sedimento.");
     renderList();
     renderHistory();
 
@@ -211,125 +237,90 @@
     }
   }
 
-  function escapeHtml(value) {
-    return String(value).replace(
-      /[&<>"']/g,
-      (character) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        })[character]
-    );
+  function renderHistory() {
+    const list = $("historyList");
+
+    const items = Store.all()
+      .filter(task => task.completed)
+      .sort((a, b) => b.completedAt - a.completedAt);
+
+    if (!items.length) {
+      list.innerHTML =
+        '<div class="histEmpty">Nenhuma tarefa concluída.</div>';
+      return;
+    }
+
+    list.innerHTML = items.map(task => {
+      const date = new Date(task.completedAt);
+      const when = Number.isNaN(date.getTime())
+        ? "Data indisponível"
+        : date.toLocaleDateString("pt-BR") + " às " +
+          date.toLocaleTimeString("pt-BR", {
+            hour: "2-digit",
+            minute: "2-digit"
+          });
+
+      return `
+        <div class="histItem">
+          <div class="kw">${escapeHtml(task.keyword)}</div>
+          <div class="when">${escapeHtml(when)}</div>
+        </div>
+      `;
+    }).join("");
   }
 
-  /* =====================================================================
-     HISTÓRICO
-  ===================================================================== */
-  const historyPanel = document.getElementById("historyPanel");
-
-  document.getElementById("historyToggle").addEventListener("click", () => {
+  $("historyToggle").addEventListener("click", () => {
     historyPanel.classList.add("open");
     renderHistory();
   });
 
-  document
-    .getElementById("historyClose")
-    .addEventListener("click", () => historyPanel.classList.remove("open"));
-
-  function renderHistory() {
-    const list = document.getElementById("historyList");
-
-    const items = Store.all()
-      .filter((task) => task.completed)
-      .sort((a, b) => b.completedAt - a.completedAt);
-
-    if (items.length === 0) {
-      list.innerHTML =
-        '<div class="histEmpty">Nenhuma tarefa depositada ainda.</div>';
-      return;
-    }
-
-    list.innerHTML = items
-      .map((task) => {
-        const date = new Date(task.completedAt);
-
-        return `
-          <div class="histItem">
-            <div class="kw">${escapeHtml(task.keyword)}</div>
-            <div class="when">
-              ${date.toLocaleDateString("pt-BR")} às
-              ${date.toLocaleTimeString("pt-BR", {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </div>
-          </div>
-        `;
-      })
-      .join("");
-  }
-
-  /* =====================================================================
-     MODAL
-  ===================================================================== */
-  const overlay = document.getElementById("overlay");
-  const modalTitle = document.getElementById("modalTitle");
-  const modalHint = document.getElementById("modalHint");
-  const fieldKeyword = document.getElementById("fieldKeyword");
-  const fieldDesc = document.getElementById("fieldDesc");
-  const prereqField = document.getElementById("prereqField");
-  const fieldPrereq = document.getElementById("fieldPrereq");
-
-  let modalState = null;
+  $("historyClose").addEventListener("click", () => {
+    historyPanel.classList.remove("open");
+  });
 
   function openModal(state) {
+    const task = state.mode === "edit"
+      ? Store.get(state.taskId)
+      : null;
+
+    if (state.mode === "edit" && !task) return;
+
     modalState = state;
-    overlay.classList.add("open");
+
+    $("modalTitle").textContent =
+      state.mode === "edit" ? "Editar tarefa" : "Nova tarefa";
+
+    $("fieldKeyword").value = task?.keyword || "";
+    $("fieldDesc").value = task?.description || "";
+    $("fieldType").value = task?.type || "pessoal";
+    $("prereqField").hidden = state.mode === "edit";
 
     if (state.mode === "edit") {
-      modalTitle.textContent = "Editar tarefa";
-      modalHint.textContent = "Ajuste a palavra-chave e a descrição.";
-
-      fieldKeyword.value = state.task.keyword;
-      fieldDesc.value = state.task.description || "";
-      prereqField.style.display = "none";
+      $("modalHint").textContent =
+        "Altere os campos desejados e toque em Salvar.";
     } else {
-      modalTitle.textContent = "Nova tarefa";
+      const select = $("fieldPrereq");
 
-      fieldKeyword.value = "";
-      fieldDesc.value = "";
+      select.replaceChildren(
+        new Option("Nenhum (tarefa raiz)", "")
+      );
 
-      prereqField.style.display = "";
+      Store.getActiveTasks().forEach(activeTask => {
+        select.add(
+          new Option(activeTask.keyword, activeTask.id)
+        );
+      });
 
-      fieldPrereq.innerHTML =
-        '<option value="">Nenhum (tarefa raiz)</option>' +
-        Store.getActiveTasks()
-          .map(
-            (task) =>
-              `<option value="${task.id}">${escapeHtml(task.keyword)}</option>`
-          )
-          .join("");
+      select.value = state.prereqOfId || "";
+      select.disabled = !!state.prereqOfId;
 
-      if (state.prereqOfId) {
-        fieldPrereq.value = state.prereqOfId;
-        fieldPrereq.disabled = true;
-
-        modalHint.textContent =
-          'Esta tarefa se tornará pré-requisito de "' +
-          state.prereqOfLabel +
-          '".';
-      } else {
-        fieldPrereq.disabled = false;
-
-        modalHint.textContent =
-          "Descreva a tarefa e, se necessário, vincule-a como pré-requisito de outra.";
-      }
+      $("modalHint").textContent = state.prereqOfId
+        ? `Esta tarefa será pré-requisito de "${Store.get(state.prereqOfId)?.keyword || "outra tarefa"}".`
+        : "Somente a palavra-chave é obrigatória.";
     }
 
-    setTimeout(() => fieldKeyword.focus(), 30);
+    overlay.classList.add("open");
+    requestAnimationFrame(() => $("fieldKeyword").focus());
   }
 
   function closeModal() {
@@ -337,42 +328,44 @@
     modalState = null;
   }
 
-  document
-    .getElementById("modalCancel")
-    .addEventListener("click", closeModal);
-
-  overlay.addEventListener("click", (event) => {
-    if (event.target === overlay) {
-      closeModal();
-    }
+  $("newTaskBtn").addEventListener("click", () => {
+    openModal({ mode: "create" });
   });
 
-  document.getElementById("modalSave").addEventListener("click", () => {
-    const keyword = fieldKeyword.value.trim();
+  $("modalCancel").addEventListener("click", closeModal);
+
+  overlay.addEventListener("click", event => {
+    if (event.target === overlay) closeModal();
+  });
+
+  $("modal").addEventListener("submit", event => {
+    event.preventDefault();
+    if (!modalState) return;
+
+    const keyword = $("fieldKeyword").value.trim();
 
     if (!keyword) {
       toast("Informe uma palavra-chave.", "err");
+      $("fieldKeyword").focus();
       return;
     }
 
-    if (!modalState) {
-      return;
-    }
+    const values = {
+      keyword,
+      description: $("fieldDesc").value.trim(),
+      type: $("fieldType").value
+    };
 
     if (modalState.mode === "edit") {
-      Store.editTask(modalState.task.id, {
-        keyword,
-        description: fieldDesc.value.trim(),
-      });
-
+      Store.editTask(modalState.taskId, values);
       toast("Tarefa atualizada.");
     } else {
-      const prereqOfId = fieldPrereq.value || null;
-
       Store.createTask({
-        keyword,
-        description: fieldDesc.value.trim(),
-        prereqOfId,
+        ...values,
+        prereqOfId:
+          modalState.prereqOfId ||
+          $("fieldPrereq").value ||
+          null
       });
 
       toast("Tarefa criada.");
@@ -386,138 +379,125 @@
     }
   });
 
-  document
-    .getElementById("newTaskBtn")
-    .addEventListener("click", () => openModal({ mode: "create" }));
-
-  /* =====================================================================
-     VISÃO EM ORGANISMO — SVG E ÁREA RESPONSIVA
-  ===================================================================== */
-  const svg = document.getElementById("organism");
-  const camera = document.getElementById("camera");
-  const hintBar = document.getElementById("hintBar");
-
-  let cam = {
-    x: CENTER.x,
-    y: CENTER.y,
-    scale: 0.82,
-  };
-
-  let pendingConnectId = null;
-  const runtime = {};
-
-  function showHint(message) {
-    hintBar.textContent = message;
-    hintBar.classList.toggle("show", !!message);
+  function fitCamera() {
+    cam.x = CENTER.x;
+    cam.y = CENTER.y;
+    cam.scale = 1;
+    applyCamera();
   }
 
-  /*
-    Faz o viewBox usar exatamente as dimensões visíveis do SVG.
+  function resizeViewport() {
+    if (currentView !== "organism") return;
 
-    Assim, em celular, tablet, notebook ou monitor ultrawide,
-    a câmera passa a calcular sua área usando a dimensão real
-    disponível abaixo do header.
-  */
-  function resizeOrganismViewport() {
     const rect = svg.getBoundingClientRect();
-
     const width = Math.max(1, Math.round(rect.width));
     const height = Math.max(1, Math.round(rect.height));
+    const box = svg.viewBox.baseVal;
 
-    const currentViewBox = svg.viewBox.baseVal;
-
-    if (
-      Math.round(currentViewBox.width) !== width ||
-      Math.round(currentViewBox.height) !== height
-    ) {
-      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-    }
-
-    if (currentView === "organism") {
-      applyCamera();
-    }
-  }
-
-  function applyCamera() {
-    const vb = svg.viewBox.baseVal;
-
-    if (!vb.width || !vb.height) {
+    if (box.width === width && box.height === height &&
+        WORLD.w === width && WORLD.h === height) {
       return;
     }
 
-    const tx = vb.width / 2 - cam.x * cam.scale;
-    const ty = vb.height / 2 - cam.y * cam.scale;
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    setWorldBounds(width, height);
+
+    // Uma mudança real de tela reposiciona o mundo no espaço novo.
+    // Isso evita manter uma câmera deslocada para fora da área visível.
+    fitCamera();
+    renderOrganism();
+  }
+
+  function applyCamera() {
+    const box = svg.viewBox.baseVal;
+    if (!box.width || !box.height) return;
 
     camera.setAttribute(
       "transform",
-      `translate(${tx},${ty}) scale(${cam.scale})`
+      `translate(${box.width / 2 - cam.x * cam.scale},` +
+      `${box.height / 2 - cam.y * cam.scale}) scale(${cam.scale})`
     );
   }
 
-  function gradFor(depth, completed) {
-    if (completed) {
-      return "url(#gradSediment)";
+  function shapeFor(task, radius) {
+    let shape;
+
+    switch (task.type) {
+      case "terceiros":
+        shape = document.createElementNS(SVG_NS, "rect");
+        shape.setAttribute("x", -radius * 0.88);
+        shape.setAttribute("y", -radius * 0.88);
+        shape.setAttribute("width", radius * 1.76);
+        shape.setAttribute("height", radius * 1.76);
+        shape.setAttribute("rx", 5);
+        break;
+
+      case "familia":
+        shape = document.createElementNS(SVG_NS, "ellipse");
+        shape.setAttribute("rx", radius * 0.78);
+        shape.setAttribute("ry", radius * 1.12);
+        break;
+
+      case "trabalho": {
+        shape = document.createElementNS(SVG_NS, "polygon");
+
+        const points = Array.from({ length: 6 }, (_, index) => {
+          const angle = Math.PI / 3 * index - Math.PI / 2;
+
+          return `${Math.cos(angle) * radius},${Math.sin(angle) * radius}`;
+        });
+
+        shape.setAttribute("points", points.join(" "));
+        break;
+      }
+
+      default:
+        shape = document.createElementNS(SVG_NS, "circle");
+        shape.setAttribute("r", radius);
     }
 
-    const palette = [
-      "url(#gradCyan)",
-      "url(#gradViolet)",
-      "url(#gradBlue)",
-      "url(#gradTeal)",
-    ];
+    return shape;
+  }
 
-    return palette[depth % palette.length];
+  function truncate(text, length) {
+    return text.length > length
+      ? text.slice(0, length - 1) + "…"
+      : text;
   }
 
   function renderOrganism() {
-    camera.innerHTML = "";
+    if (currentView !== "organism") return;
 
-    const tasks = Store.all();
+    camera.replaceChildren();
 
-    const bg = document.createElementNS(
-      "http://www.w3.org/2000/svg",
-      "rect"
-    );
+    const background = document.createElementNS(SVG_NS, "rect");
+    background.setAttribute("x", -2000);
+    background.setAttribute("y", -2000);
+    background.setAttribute("width", WORLD.w + 4000);
+    background.setAttribute("height", WORLD.h + 4000);
+    background.setAttribute("fill", "#070911");
+    camera.appendChild(background);
 
-    bg.setAttribute("x", -2000);
-    bg.setAttribute("y", -2000);
-    bg.setAttribute("width", WORLD.w + 4000);
-    bg.setAttribute("height", WORLD.h + 4000);
-    bg.setAttribute("fill", "#070911");
+    const sedimentTop = getBounds().sedimentTop;
 
-    camera.appendChild(bg);
-
-    const floor = document.createElementNS(
-      "http://www.w3.org/2000/svg",
-      "rect"
-    );
-
+    const floor = document.createElementNS(SVG_NS, "rect");
     floor.setAttribute("x", 0);
-    floor.setAttribute("y", SEDIMENT_TOP - 150);
+    floor.setAttribute("y", sedimentTop - 150);
     floor.setAttribute("width", WORLD.w);
     floor.setAttribute(
       "height",
-      WORLD.h - SEDIMENT_TOP + 150 + 400
+      WORLD.h - sedimentTop + 550
     );
     floor.setAttribute("fill", "url(#gradFloor)");
-
     camera.appendChild(floor);
 
-    const active = tasks.filter((task) => !task.completed);
+    const tasks = Store.all();
 
-    active.forEach((task) => {
-      task.parents.forEach((parentId) => {
-        const parent = Store.get(parentId);
+    tasks.filter(task => !task.completed).forEach(task => {
+      Store.getParents(task.id).forEach(parent => {
+        if (parent.completed) return;
 
-        if (!parent || parent.completed) {
-          return;
-        }
-
-        const path = document.createElementNS(
-          "http://www.w3.org/2000/svg",
-          "path"
-        );
-
+        const path = document.createElementNS(SVG_NS, "path");
         const middleX = (task.x + parent.x) / 2;
         const middleY = (task.y + parent.y) / 2 - 40;
 
@@ -525,28 +505,35 @@
           "d",
           `M ${parent.x} ${parent.y} Q ${middleX} ${middleY} ${task.x} ${task.y}`
         );
-
         path.setAttribute("class", "connLine");
         path.setAttribute("stroke", "url(#gradConn)");
         path.setAttribute("stroke-width", 2);
         path.setAttribute("opacity", 0.55);
-
         camera.appendChild(path);
       });
     });
 
-    tasks.forEach((task) => {
-      const depth = task.completed ? 0 : Store.getDepth(task.id);
-      const weight = task.completed ? 0 : Store.getWeight(task.id);
+    const palette = [
+      "url(#gradGreen)",
+      "url(#gradViolet)",
+      "url(#gradBlue)",
+      "url(#gradOrange)"
+    ];
+
+    tasks.forEach(task => {
+      const weight = task.completed
+        ? 0
+        : Store.getWeight(task.id);
 
       const radius = task.completed
         ? 22
         : Math.min(70, 24 + weight * 5);
 
-      const group = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        "g"
-      );
+      const depth = task.completed
+        ? 0
+        : Store.getDepth(task.id);
+
+      const group = document.createElementNS(SVG_NS, "g");
 
       group.setAttribute(
         "class",
@@ -559,64 +546,71 @@
 
       group.setAttribute(
         "transform",
-        `translate(${task.x},${task.y})${
-          task.completed ? " scale(1,0.82)" : ""
-        }`
+        `translate(${task.x},${task.y})` +
+          (task.completed ? " scale(1,0.82)" : "")
       );
 
-      const circle = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        "circle"
+      const membrane = shapeFor(task, radius);
+      membrane.setAttribute("class", "membrane");
+
+      membrane.setAttribute(
+        "fill",
+        task.completed
+          ? "url(#gradSediment)"
+          : palette[Math.min(depth, palette.length - 1)]
       );
 
-      circle.setAttribute("r", radius);
-      circle.setAttribute("fill", gradFor(depth, task.completed));
-      circle.setAttribute("class", "membrane");
-
-      if (!task.completed) {
-        circle.setAttribute("filter", "url(#membraneGlow)");
-      }
-
-      circle.setAttribute(
+      membrane.setAttribute(
         "stroke",
         task.completed
           ? "rgba(255,224,170,0.72)"
           : "rgba(232,255,250,0.68)"
       );
 
-      circle.setAttribute(
+      membrane.setAttribute(
         "stroke-width",
         task.completed ? 2.1 : 2.4
       );
 
-      circle.setAttribute(
-        "opacity",
-        task.completed ? 0.94 : 0.98
-      );
+      if (!task.completed) {
+        membrane.setAttribute(
+          "filter",
+          "url(#membraneGlow)"
+        );
+      }
 
-      group.appendChild(circle);
+      group.appendChild(membrane);
 
       if (!task.completed) {
-        const nucleus = document.createElementNS(
-          "http://www.w3.org/2000/svg",
-          "circle"
+        const nucleus =
+          document.createElementNS(SVG_NS, "circle");
+
+        nucleus.setAttribute(
+          "r",
+          Math.max(4, radius * 0.22)
         );
 
-        nucleus.setAttribute("r", Math.max(4, radius * 0.28));
-        nucleus.setAttribute("fill", "rgba(255,255,255,0.35)");
+        nucleus.setAttribute(
+          "fill",
+          "rgba(255,255,255,0.35)"
+        );
 
         group.appendChild(nucleus);
       }
 
-      const label = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        "text"
-      );
+      const label =
+        document.createElementNS(SVG_NS, "text");
 
       label.setAttribute("class", "nodeLabel");
       label.setAttribute("text-anchor", "middle");
-      label.setAttribute("y", task.completed ? 4 : radius + 16);
-      label.setAttribute("font-size", task.completed ? 10 : 12);
+      label.setAttribute(
+        "y",
+        task.completed ? 4 : radius * 1.12 + 17
+      );
+      label.setAttribute(
+        "font-size",
+        task.completed ? 10 : 12
+      );
 
       label.textContent = truncate(
         task.keyword,
@@ -630,138 +624,128 @@
     applyCamera();
   }
 
-  function truncate(text, maxLength) {
-    return text.length > maxLength
-      ? text.slice(0, maxLength - 1) + "…"
-      : text;
-  }
-
-  /*
-    ResizeObserver observa diretamente o espaço do organismo.
-    Isso é mais confiável que somente window.resize, pois também
-    cobre alterações causadas pelo header ou pelo layout.
-  */
-  if ("ResizeObserver" in window) {
-    const organismResizeObserver = new ResizeObserver(() => {
-      resizeOrganismViewport();
-
-      if (currentView === "organism") {
-        renderOrganism();
-      }
-    });
-
-    organismResizeObserver.observe(orgWrap);
-  }
-
-  window.addEventListener("resize", () => {
-    resizeOrganismViewport();
-
-    if (currentView === "organism") {
-      renderOrganism();
-    }
-  });
-
-  window.addEventListener("orientationchange", () => {
-    setTimeout(() => {
-      resizeOrganismViewport();
-
-      if (currentView === "organism") {
-        renderOrganism();
-      }
-    }, 150);
-  });
-
-  /* =====================================================================
-     INTERAÇÃO: ARRASTE, PAN, CONEXÃO E DUPLO CLIQUE
-  ===================================================================== */
-  let drag = null;
-  let panState = null;
-  let lastInteraction = Date.now();
-
   function svgPoint(event) {
     const rect = svg.getBoundingClientRect();
-    const vb = svg.viewBox.baseVal;
-
-    const safeWidth = rect.width || 1;
-    const safeHeight = rect.height || 1;
+    const box = svg.viewBox.baseVal;
 
     const screenX =
-      ((event.clientX - rect.left) / safeWidth) * vb.width;
+      (event.clientX - rect.left) /
+      (rect.width || 1) * box.width;
 
     const screenY =
-      ((event.clientY - rect.top) / safeHeight) * vb.height;
-
-    const worldX =
-      (screenX - vb.width / 2) / cam.scale + cam.x;
-
-    const worldY =
-      (screenY - vb.height / 2) / cam.scale + cam.y;
+      (event.clientY - rect.top) /
+      (rect.height || 1) * box.height;
 
     return {
-      x: worldX,
-      y: worldY,
+      x: (screenX - box.width / 2) / cam.scale + cam.x,
+      y: (screenY - box.height / 2) / cam.scale + cam.y
     };
   }
 
-  svg.addEventListener("pointerdown", (event) => {
+  function handleNodeTap(id) {
+    const task = Store.get(id);
+    if (!task || task.completed) return;
+
+    if (pendingConnectId === null) {
+      pendingConnectId = id;
+
+      showHint(
+        `Pré-requisito: "${task.keyword}". Toque na tarefa dependente ou no fundo para cancelar.`
+      );
+
+      renderOrganism();
+      return;
+    }
+
+    if (pendingConnectId === id) {
+      clearConnection();
+      renderOrganism();
+      return;
+    }
+
+    const result =
+      Store.connectTask(pendingConnectId, id);
+
+    clearConnection();
+
+    if (!result.ok) {
+      const messages = {
+        exists: "Essa conexão já existe.",
+        cycle: "Isso criaria um ciclo.",
+        same: "Não é possível conectar a si mesma."
+      };
+
+      toast(
+        messages[result.reason] ||
+          "Não foi possível conectar.",
+        "err"
+      );
+    } else {
+      toast("Conexão criada.");
+    }
+
+    renderList();
+    renderOrganism();
+  }
+
+  svg.addEventListener("pointerdown", event => {
     lastInteraction = Date.now();
 
-    const nodeEl = event.target.closest(".node");
+    const node = event.target.closest(".node");
 
-    if (nodeEl) {
-      const id = nodeEl.getAttribute("data-id");
+    if (node) {
+      const id = node.getAttribute("data-id");
       const task = Store.get(id);
 
-      if (task.completed) {
-        return;
-      }
+      if (!task || task.completed) return;
 
       const point = svgPoint(event);
 
       drag = {
         id,
+        pointerId: event.pointerId,
         startX: point.x,
         startY: point.y,
-        moved: false,
-        offX: point.x - task.x,
-        offY: point.y - task.y,
+        offsetX: point.x - task.x,
+        offsetY: point.y - task.y,
+        moved: false
       };
 
       svg.setPointerCapture(event.pointerId);
       return;
     }
 
-    panState = {
-      startClientX: event.clientX,
-      startClientY: event.clientY,
+    pan = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
       camX: cam.x,
       camY: cam.y,
+      moved: false
     };
 
     svg.classList.add("panning");
     svg.setPointerCapture(event.pointerId);
   });
 
-  svg.addEventListener("pointermove", (event) => {
-    lastInteraction = Date.now();
+  svg.addEventListener("pointermove", event => {
+    if (drag?.pointerId === event.pointerId) {
+      lastInteraction = Date.now();
 
-    if (drag) {
       const point = svgPoint(event);
 
-      if (
-        Math.hypot(
-          point.x - drag.startX,
-          point.y - drag.startY
-        ) > 4
-      ) {
+      if (Math.hypot(
+        point.x - drag.startX,
+        point.y - drag.startY
+      ) > 4) {
         drag.moved = true;
       }
 
       if (drag.moved) {
         Store.updatePosition(
           drag.id,
-          point.x - drag.offX,
-          point.y - drag.offY
+          point.x - drag.offsetX,
+          point.y - drag.offsetY
         );
 
         renderOrganism();
@@ -770,135 +754,90 @@
       return;
     }
 
-    if (panState) {
-      const rect = svg.getBoundingClientRect();
-      const vb = svg.viewBox.baseVal;
+    if (pan?.pointerId === event.pointerId) {
+      lastInteraction = Date.now();
 
-      const dx =
-        ((event.clientX - panState.startClientX) /
-          (rect.width || 1)) *
-        vb.width /
-        cam.scale;
+      const dx = event.clientX - pan.clientX;
+      const dy = event.clientY - pan.clientY;
 
-      const dy =
-        ((event.clientY - panState.startClientY) /
-          (rect.height || 1)) *
-        vb.height /
-        cam.scale;
+      if (Math.hypot(dx, dy) > 4) {
+        pan.moved = true;
+      }
 
-      cam.x = panState.camX - dx;
-      cam.y = panState.camY - dy;
-
+      cam.x = pan.camX - dx / cam.scale;
+      cam.y = pan.camY - dy / cam.scale;
       applyCamera();
     }
   });
 
-  svg.addEventListener("pointerup", () => {
-    if (drag) {
-      if (!drag.moved) {
-        handleNodeClick(drag.id);
-      } else {
-        Store.save();
-      }
-
+  svg.addEventListener("pointerup", event => {
+    if (drag?.pointerId === event.pointerId) {
+      const { id, moved } = drag;
       drag = null;
+
+      if (moved) {
+        lastTap = null;
+        Store.save();
+      } else {
+        const now = Date.now();
+
+        if (lastTap?.id === id &&
+            now - lastTap.time < 350) {
+          clearTimeout(lastTap.timer);
+          lastTap = null;
+          doComplete(id);
+        } else {
+          if (lastTap) clearTimeout(lastTap.timer);
+
+          const tap = {
+            id,
+            time: now,
+            timer: setTimeout(() => {
+              if (lastTap !== tap) return;
+
+              lastTap = null;
+              handleNodeTap(id);
+            }, 350)
+          };
+
+          lastTap = tap;
+        }
+      }
     }
 
-    if (panState) {
-      panState = null;
+    if (pan?.pointerId === event.pointerId) {
+      const moved = pan.moved;
+      pan = null;
       svg.classList.remove("panning");
+
+      if (!moved && pendingConnectId) {
+        clearConnection();
+        renderOrganism();
+      }
     }
   });
 
   svg.addEventListener("pointercancel", () => {
     drag = null;
-    panState = null;
+    pan = null;
     svg.classList.remove("panning");
+    Store.save();
   });
 
-  svg.addEventListener("dblclick", (event) => {
-    const nodeEl = event.target.closest(".node");
-
-    if (!nodeEl) {
-      return;
-    }
-
-    doComplete(nodeEl.getAttribute("data-id"));
-  });
-
-  function handleNodeClick(id) {
-    const task = Store.get(id);
-
-    if (task.completed) {
-      return;
-    }
-
-    if (pendingConnectId === null) {
-      pendingConnectId = id;
-
-      showHint(
-        'Pré-requisito selecionado: "' +
-          task.keyword +
-          '". Clique na tarefa que depende dele (ou no fundo para cancelar).'
-      );
-
-      renderOrganism();
-      return;
-    }
-
-    if (pendingConnectId === id) {
-      pendingConnectId = null;
-      showHint("");
-      renderOrganism();
-      return;
-    }
-
-    const res = Store.connectTask(pendingConnectId, id);
-
-    pendingConnectId = null;
-    showHint("");
-
-    if (!res.ok) {
-      const messages = {
-        exists: "Essa conexão já existe.",
-        cycle: "Isso criaria um ciclo — conexão bloqueada.",
-        same: "Não é possível conectar a si mesma.",
-      };
-
-      toast(messages[res.reason] || "Não foi possível conectar.", "err");
-    } else {
-      toast("Conexão criada.");
-    }
-
-    renderOrganism();
-
-    if (currentView === "list") {
-      renderList();
-    }
-  }
-
-  svg.addEventListener("click", (event) => {
-    if (!event.target.closest(".node") && pendingConnectId) {
-      pendingConnectId = null;
-      showHint("");
-      renderOrganism();
-    }
-  });
-
-  /* =====================================================================
-     ZOOM
-  ===================================================================== */
   function zoomAt(factor, clientX, clientY) {
-    const before =
-      clientX !== undefined
-        ? svgPoint({ clientX, clientY })
-        : { x: cam.x, y: cam.y };
+    const anchored = clientX !== undefined;
 
-    cam.scale = Math.max(0.12, Math.min(2.2, cam.scale * factor));
+    const before = anchored
+      ? svgPoint({ clientX, clientY })
+      : null;
 
-    if (clientX !== undefined) {
+    cam.scale = Math.max(
+      0.12,
+      Math.min(2.2, cam.scale * factor)
+    );
+
+    if (anchored) {
       const after = svgPoint({ clientX, clientY });
-
       cam.x += before.x - after.x;
       cam.y += before.y - after.y;
     }
@@ -906,159 +845,117 @@
     applyCamera();
   }
 
-  svg.addEventListener(
-    "wheel",
-    (event) => {
-      event.preventDefault();
+  svg.addEventListener("wheel", event => {
+    event.preventDefault();
 
-      zoomAt(
-        event.deltaY < 0 ? 1.1 : 0.9,
-        event.clientX,
-        event.clientY
-      );
-    },
-    { passive: false }
+    zoomAt(
+      event.deltaY < 0 ? 1.1 : 0.9,
+      event.clientX,
+      event.clientY
+    );
+  }, { passive: false });
+
+  $("zoomIn").addEventListener(
+    "click",
+    () => zoomAt(1.2)
   );
 
-  document
-    .getElementById("zoomIn")
-    .addEventListener("click", () => zoomAt(1.2));
+  $("zoomOut").addEventListener(
+    "click",
+    () => zoomAt(0.83)
+  );
 
-  document
-    .getElementById("zoomOut")
-    .addEventListener("click", () => zoomAt(0.83));
+  $("zoomReset").addEventListener(
+    "click",
+    fitCamera
+  );
 
-  document.getElementById("zoomReset").addEventListener("click", () => {
-    cam = {
-      x: CENTER.x,
-      y: CENTER.y,
-      scale: 0.82,
-    };
-
-    applyCamera();
-  });
-
-  /* =====================================================================
-     MOTOR DE VIDA
-  ===================================================================== */
-  let engineRunning = false;
-  let paused = false;
-  let speed = 1.0;
-  let rafId = null;
-  let autosaveTimer = null;
-
-  const IDLE_MS = 700;
-  const WANDER_R = 360;
-
-  function startEngine() {
-    if (engineRunning) {
-      return;
-    }
-
-    engineRunning = true;
-
-    let last = performance.now();
-
-    function tick(now) {
-      const dt = Math.min(0.05, (now - last) / 1000);
-
-      last = now;
-
-      if (!paused && Date.now() - lastInteraction > IDLE_MS) {
-        step(dt);
-        renderOrganism();
-      }
-
-      if (engineRunning) {
-        rafId = requestAnimationFrame(tick);
-      }
-    }
-
-    rafId = requestAnimationFrame(tick);
-
-    autosaveTimer = setInterval(() => Store.save(), 3000);
+  if ("ResizeObserver" in window) {
+    new ResizeObserver(resizeViewport).observe(orgWrap);
+  } else {
+    window.addEventListener("resize", resizeViewport);
   }
 
-  function stopEngine() {
-    engineRunning = false;
+  function randomTarget() {
+    const margin = WORLD.padding;
 
-    if (rafId) {
-      cancelAnimationFrame(rafId);
-      rafId = null;
-    }
-
-    if (autosaveTimer) {
-      clearInterval(autosaveTimer);
-      autosaveTimer = null;
-    }
-
-    Store.save();
+    return {
+      x: margin + Math.random() *
+        Math.max(0, WORLD.w - 2 * margin),
+      y: margin + Math.random() *
+        Math.max(0, WORLD.h - 2 * margin)
+    };
   }
 
   function step(dt) {
     const active = Store.getActiveTasks();
+    const delta = Math.min(dt, 0.05) * speed;
 
-    active.forEach((task) => {
-      if (drag && drag.id === task.id) {
-        return;
-      }
+    active.forEach(task => {
+      if (drag?.id === task.id) return;
 
-      if (!runtime[task.id]) {
-        runtime[task.id] = {
-          heading: Math.random() * Math.PI * 2,
+      if (!runtime.has(task.id)) {
+        runtime.set(task.id, {
+          target: randomTarget(),
+          remaining: 3 + Math.random() * 5,
           vx: 0,
-          vy: 0,
-        };
+          vy: 0
+        });
       }
 
-      const state = runtime[task.id];
+      const state = runtime.get(task.id);
+      state.remaining -= delta;
 
-      state.heading += (Math.random() - 0.5) * 0.9 * speed;
+      const targetDistance = Math.hypot(
+        state.target.x - task.x,
+        state.target.y - task.y
+      );
 
-      let ax = Math.cos(state.heading) * 6 * speed;
-      let ay = Math.sin(state.heading) * 6 * speed;
+      if (state.remaining <= 0 ||
+          targetDistance < 35) {
+        state.target = randomTarget();
+        state.remaining = 3 + Math.random() * 5;
+      }
+
+      const dx = state.target.x - task.x;
+      const dy = state.target.y - task.y;
+      const distance = Math.hypot(dx, dy) || 1;
+
+      // Alvos distribuídos por toda a área, sem atração ao centro.
+      let vx = dx / distance * Math.min(90, distance * 0.45);
+      let vy = dy / distance * Math.min(90, distance * 0.45);
 
       const links = [
         ...Store.getParents(task.id),
-        ...Store.getChildren(task.id),
-      ].filter((other) => other && !other.completed);
+        ...Store.getChildren(task.id)
+      ].filter(other => !other.completed);
 
-      links.forEach((other) => {
-        const dx = other.x - task.x;
-        const dy = other.y - task.y;
-        const distance = Math.hypot(dx, dy) || 1;
+      links.forEach(other => {
+        const linkX = other.x - task.x;
+        const linkY = other.y - task.y;
+        const linkDistance =
+          Math.hypot(linkX, linkY) || 1;
 
-        const idealDistance = 200;
-        const difference =
-          (distance - idealDistance) / idealDistance;
+        // Vínculos influenciam o movimento sem confinar a rede
+        // em um círculo no meio da tela.
+        const correction = Math.max(
+          -24,
+          Math.min(24, (linkDistance - 200) * 0.12)
+        );
 
-        ax += (dx / distance) * difference * 14;
-        ay += (dy / distance) * difference * 14;
+        vx += linkX / linkDistance * correction;
+        vy += linkY / linkDistance * correction;
       });
 
-      const centerDX = CENTER.x - task.x;
-      const centerDY = CENTER.y - task.y;
-      const centerDistance = Math.hypot(centerDX, centerDY);
+      const smoothing = Math.min(1, delta * 2.2);
 
-      if (centerDistance > WANDER_R) {
-        ax +=
-          (centerDX / centerDistance) *
-          (centerDistance - WANDER_R) *
-          0.02;
-
-        ay +=
-          (centerDY / centerDistance) *
-          (centerDistance - WANDER_R) *
-          0.02;
-      }
-
-      state.vx = (state.vx + ax * dt) * 0.94;
-      state.vy = (state.vy + ay * dt) * 0.94;
+      state.vx += (vx - state.vx) * smoothing;
+      state.vy += (vy - state.vy) * smoothing;
 
       Store.updatePosition(
         task.id,
-        task.x + state.vx,
-        Math.min(task.y + state.vy, SEDIMENT_TOP - 40)
+        task.x + state.vx * delta,
+        task.y + state.vy * delta
       );
     });
 
@@ -1067,79 +964,139 @@
         const a = active[i];
         const b = active[j];
 
-        if (
-          (drag && drag.id === a.id) ||
-          (drag && drag.id === b.id)
-        ) {
+        if (drag?.id === a.id ||
+            drag?.id === b.id) {
           continue;
         }
 
         const dx = b.x - a.x;
         const dy = b.y - a.y;
-        const distance = Math.hypot(dx, dy) || 1;
+        const distance = Math.hypot(dx, dy);
 
-        const minDistance = 90;
+        if (distance >= 90) continue;
 
-        if (distance < minDistance) {
-          const push = (minDistance - distance) / 2;
+        const directionX =
+          distance > 0 ? dx / distance : 1;
 
-          const nx = dx / distance;
-          const ny = dy / distance;
+        const directionY =
+          distance > 0 ? dy / distance : 0;
 
-          Store.updatePosition(
-            a.id,
-            a.x - nx * push,
-            a.y - ny * push
-          );
+        const push = (90 - distance) / 2;
 
-          Store.updatePosition(
-            b.id,
-            b.x + nx * push,
-            b.y + ny * push
-          );
-        }
+        Store.updatePosition(
+          a.id,
+          a.x - directionX * push,
+          a.y - directionY * push
+        );
+
+        Store.updatePosition(
+          b.id,
+          b.x + directionX * push,
+          b.y + directionY * push
+        );
       }
     }
   }
 
-  document.getElementById("pauseBtn").addEventListener("click", function () {
+  function startEngine() {
+    if (engineRunning) return;
+
+    engineRunning = true;
+    let last = performance.now();
+
+    function tick(now) {
+      if (!engineRunning) return;
+
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+
+      if (!paused &&
+          Date.now() - lastInteraction > 700 &&
+          !document.hidden) {
+        step(dt);
+        renderOrganism();
+      }
+
+      rafId = requestAnimationFrame(tick);
+    }
+
+    rafId = requestAnimationFrame(tick);
+
+    autosaveTimer = setInterval(
+      () => Store.save(),
+      3000
+    );
+  }
+
+  function stopEngine() {
+    engineRunning = false;
+
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId);
+    }
+
+    if (autosaveTimer !== null) {
+      clearInterval(autosaveTimer);
+    }
+
+    rafId = null;
+    autosaveTimer = null;
+    Store.save();
+  }
+
+  $("pauseBtn").addEventListener("click", () => {
     paused = !paused;
 
-    this.classList.toggle("paused", paused);
-    this.classList.toggle("running", !paused);
-
-    this.textContent = paused
-      ? "▶ Vida pausada"
-      : "⏸ Vida ativa";
-  });
-
-  document.getElementById("speedUp").addEventListener("click", () => {
-    speed = Math.min(
-      3.0,
-      Math.round((speed + 0.2) * 10) / 10
+    $("pauseBtn").classList.toggle(
+      "paused",
+      paused
     );
 
-    document.getElementById("speedLabel").textContent =
-      speed.toFixed(1) + "x";
+    $("pauseBtn").classList.toggle(
+      "running",
+      !paused
+    );
+
+    $("pauseBtn").textContent =
+      paused ? "▶" : "⏸";
+
+    $("pauseBtn").title =
+      paused ? "Retomar animação" : "Pausar animação";
+
+    $("pauseBtn").setAttribute(
+      "aria-label",
+      paused ? "Retomar animação" : "Pausar animação"
+    );
   });
 
-  document.getElementById("speedDown").addEventListener("click", () => {
+  function updateSpeed(change) {
     speed = Math.max(
       0.2,
-      Math.round((speed - 0.2) * 10) / 10
+      Math.min(
+        3,
+        Math.round((speed + change) * 10) / 10
+      )
     );
 
-    document.getElementById("speedLabel").textContent =
-      speed.toFixed(1) + "x";
-  });
+    $("speedLabel").textContent =
+      speed.toFixed(1).replace(".", ",") + "×";
+  }
 
-  /* =====================================================================
-     EXPORTAR / IMPORTAR / RESET
-  ===================================================================== */
-  document.getElementById("exportBtn").addEventListener("click", () => {
-    const blob = new Blob([Store.exportData()], {
-      type: "application/json",
-    });
+  $("speedUp").addEventListener(
+    "click",
+    () => updateSpeed(0.2)
+  );
+
+  $("speedDown").addEventListener(
+    "click",
+    () => updateSpeed(-0.2)
+  );
+
+  $("exportBtn").addEventListener("click", () => {
+    const blob = new Blob(
+      [Store.exportData()],
+      { type: "application/json" }
+    );
 
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -1150,86 +1107,30 @@
       .replace(/[:T]/g, "-");
 
     link.href = url;
-    link.download = `organismo-de-tarefas-${stamp}.json`;
+    link.download =
+      `organismo-de-tarefas-${stamp}.json`;
 
     document.body.appendChild(link);
     link.click();
     link.remove();
 
-    URL.revokeObjectURL(url);
+    setTimeout(
+      () => URL.revokeObjectURL(url),
+      1000
+    );
 
     toast("Tarefas exportadas.");
   });
 
-  const importFile = document.getElementById("importFile");
+  function refreshAfterReplacement() {
+    runtime.clear();
+    clearConnection();
 
-  document
-    .getElementById("importBtn")
-    .addEventListener("click", () => importFile.click());
-
-  importFile.addEventListener("change", () => {
-    const file = importFile.files[0];
-
-    if (!file) {
-      return;
+    if (lastTap) {
+      clearTimeout(lastTap.timer);
     }
 
-    if (
-      !confirm(
-        "Importar substituirá todas as tarefas atuais por este arquivo. Continuar?"
-      )
-    ) {
-      importFile.value = "";
-      return;
-    }
-
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      const res = Store.importData(reader.result);
-
-      if (!res.ok) {
-        toast(
-          res.reason === "parse"
-            ? "Arquivo inválido — não é um JSON legível."
-            : "Formato inesperado — verifique o arquivo.",
-          "err"
-        );
-      } else {
-        Object.keys(runtime).forEach((key) => delete runtime[key]);
-
-        pendingConnectId = null;
-
-        renderList();
-        renderHistory();
-
-        if (currentView === "organism") {
-          renderOrganism();
-        }
-
-        toast("Tarefas importadas.");
-      }
-
-      importFile.value = "";
-    };
-
-    reader.readAsText(file);
-  });
-
-  document.getElementById("resetBtn").addEventListener("click", () => {
-    if (
-      !confirm(
-        "Isto apaga permanentemente todas as tarefas e o histórico. Deseja continuar?"
-      )
-    ) {
-      return;
-    }
-
-    Store.resetAll();
-
-    Object.keys(runtime).forEach((key) => delete runtime[key]);
-
-    pendingConnectId = null;
+    lastTap = null;
 
     renderList();
     renderHistory();
@@ -1237,41 +1138,103 @@
     if (currentView === "organism") {
       renderOrganism();
     }
+  }
 
-    toast("Tudo apagado. Começando do zero.");
-  });
+  const importFile = $("importFile");
 
-  /* =====================================================================
-     TECLADO
-  ===================================================================== */
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") {
+  $("importBtn").addEventListener(
+    "click",
+    () => importFile.click()
+  );
+
+  importFile.addEventListener("change", async () => {
+    const file = importFile.files?.[0];
+    if (!file) return;
+
+    if (!confirm(
+      "Importar substituirá todas as tarefas atuais. Deseja continuar?"
+    )) {
+      importFile.value = "";
       return;
     }
+
+    try {
+      const result =
+        Store.importData(await file.text());
+
+      if (!result.ok) {
+        toast(
+          result.reason === "parse"
+            ? "Arquivo inválido: JSON ilegível."
+            : "Formato inesperado de arquivo.",
+          "err"
+        );
+      } else {
+        refreshAfterReplacement();
+        toast("Tarefas importadas.");
+      }
+    } catch {
+      toast(
+        "Não foi possível ler o arquivo.",
+        "err"
+      );
+    } finally {
+      importFile.value = "";
+    }
+  });
+
+  $("resetBtn").addEventListener("click", () => {
+    if (!confirm(
+      "Isto apagará todas as tarefas e o histórico. Deseja continuar?"
+    )) {
+      return;
+    }
+
+    Store.resetAll();
+    refreshAfterReplacement();
+    toast("Tarefas apagadas.");
+  });
+
+  document.addEventListener("keydown", event => {
+    if (event.key !== "Escape") return;
 
     if (overlay.classList.contains("open")) {
       closeModal();
     } else if (pendingConnectId) {
-      pendingConnectId = null;
+      clearConnection();
       renderOrganism();
-      showHint("");
-    } else if (historyPanel.classList.contains("open")) {
+    } else {
       historyPanel.classList.remove("open");
     }
   });
 
-  /* =====================================================================
-     INIT
-  ===================================================================== */
+  document.addEventListener(
+    "visibilitychange",
+    () => {
+      if (document.hidden) {
+        Store.save();
+      }
+    }
+  );
+
+  window.addEventListener(
+    "beforeunload",
+    () => Store.save()
+  );
+
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker
+        .register("./sw.js")
+        .catch(error => {
+          console.warn(
+            "Service worker não registrado:",
+            error
+          );
+        });
+    });
+  }
+
   renderList();
   renderHistory();
-
-  requestAnimationFrame(() => {
-    resizeOrganismViewport();
-    applyCamera();
-  });
-
-  window.addEventListener("beforeunload", () => {
-    Store.save();
-  });
 })();

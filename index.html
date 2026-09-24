@@ -1,62 +1,49 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
-
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#05060a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Organismo">
+
   <title>Organismo de Tarefas</title>
+
   <link rel="stylesheet" href="./style.css">
   <link rel="manifest" href="./manifest.json">
-<meta name="theme-color" content="#05060a">
-
-<link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
-<link rel="apple-touch-icon" href="./icons/icon-192.png">
-
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Organismo">
-
-  
+  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
+  <link rel="apple-touch-icon" href="./icon-192.png">
 </head>
 
 <body>
   <div id="app">
     <header>
       <div class="brand">
-        <span class="dot"></span>
+        <span class="dot" aria-hidden="true"></span>
         <h1>Organismo de Tarefas</h1>
-        <span class="sub">&nbsp;— fluxo vivo de trabalho</span>
       </div>
 
-      <div class="lifeControls" id="lifeControls" title="Motor de vida do organismo">
-        <button id="pauseBtn" class="running">⏸ Vida ativa</button>
-        <span class="speedLabel" id="speedLabel">1.0x</span>
-        <button id="speedDown">−</button>
-        <button id="speedUp">+</button>
+      <div class="lifeControls" aria-label="Controles do organismo">
+        <button id="pauseBtn" class="running" type="button" title="Pausar ou retomar" aria-label="Pausar animação">⏸</button>
+        <button id="speedDown" type="button" title="Diminuir velocidade" aria-label="Diminuir velocidade">−</button>
+        <span id="speedLabel" class="speedLabel">1,0×</span>
+        <button id="speedUp" type="button" title="Aumentar velocidade" aria-label="Aumentar velocidade">+</button>
       </div>
 
-      <div class="viewToggle">
-        <button id="toListBtn" class="active">Lista</button>
-        <button id="toOrgBtn">Organismo</button>
+      <div class="viewToggle" aria-label="Visualização">
+        <button id="toListBtn" class="active" type="button">Lista</button>
+        <button id="toOrgBtn" type="button">Organismo</button>
       </div>
 
       <div class="ioGroup">
-        <button class="btn ghost" id="exportBtn" title="Exportar tarefas (JSON, com hierarquia)">
-          Exportar
-        </button>
-
-        <button class="btn ghost" id="importBtn" title="Importar tarefas de um arquivo JSON">
-          Importar
-        </button>
-
-        <input type="file" id="importFile" accept="application/json" hidden>
-
-        <button class="btn ghost danger" id="resetBtn" title="Apagar todos os registros">
-          Reset
-        </button>
+        <button class="btn ghost" id="exportBtn" type="button" title="Exportar tarefas em JSON">Exportar</button>
+        <button class="btn ghost" id="importBtn" type="button" title="Importar tarefas de um JSON">Importar</button>
+        <input type="file" id="importFile" accept=".json,application/json" hidden>
+        <button class="btn ghost danger" id="resetBtn" type="button" title="Apagar tarefas e histórico">Reset</button>
       </div>
 
-      <button class="btn" id="newTaskBtn">+ Nova tarefa</button>
+      <button class="btn newTaskBtn" id="newTaskBtn" type="button" title="Nova tarefa" aria-label="Nova tarefa">+</button>
     </header>
 
     <main>
@@ -65,61 +52,56 @@
       </div>
 
       <div id="organismWrap">
-        <!--
-          O viewBox será atualizado dinamicamente pelo app.js
-          conforme a área realmente disponível na tela.
-        -->
         <svg
           id="organism"
           viewBox="0 0 1 1"
           preserveAspectRatio="none"
           role="img"
-          aria-label="Visualização do organismo de tarefas"
+          aria-label="Visualização das tarefas como organismo"
         >
           <defs>
-            <radialGradient id="gradCyan" cx="35%" cy="30%" r="75%">
-              <stop offset="0%" stop-color="#d9fff5" />
-              <stop offset="45%" stop-color="#4ee2c0" />
-              <stop offset="100%" stop-color="#136a58" />
+            <radialGradient id="gradGreen" cx="35%" cy="30%" r="75%">
+              <stop offset="0%" stop-color="#d9fff5"/>
+              <stop offset="45%" stop-color="#4ee2c0"/>
+              <stop offset="100%" stop-color="#136a58"/>
             </radialGradient>
 
             <radialGradient id="gradViolet" cx="35%" cy="30%" r="75%">
-              <stop offset="0%" stop-color="#efd9ff" />
-              <stop offset="45%" stop-color="#b479ff" />
-              <stop offset="100%" stop-color="#5a2f96" />
+              <stop offset="0%" stop-color="#efd9ff"/>
+              <stop offset="45%" stop-color="#b479ff"/>
+              <stop offset="100%" stop-color="#5a2f96"/>
             </radialGradient>
 
             <radialGradient id="gradBlue" cx="35%" cy="30%" r="75%">
-              <stop offset="0%" stop-color="#d6ecff" />
-              <stop offset="45%" stop-color="#5ba8ff" />
-              <stop offset="100%" stop-color="#20477f" />
+              <stop offset="0%" stop-color="#d6ecff"/>
+              <stop offset="45%" stop-color="#5ba8ff"/>
+              <stop offset="100%" stop-color="#20477f"/>
             </radialGradient>
 
-            <radialGradient id="gradTeal" cx="35%" cy="30%" r="75%">
-              <stop offset="0%" stop-color="#c9fff0" />
-              <stop offset="45%" stop-color="#33bfa0" />
-              <stop offset="100%" stop-color="#0f5c4d" />
+            <radialGradient id="gradOrange" cx="35%" cy="30%" r="75%">
+              <stop offset="0%" stop-color="#ffe8ba"/>
+              <stop offset="45%" stop-color="#ff9d43"/>
+              <stop offset="100%" stop-color="#ae3e26"/>
             </radialGradient>
 
             <radialGradient id="gradSediment" cx="35%" cy="25%" r="80%">
-              <stop offset="0%" stop-color="#ffdca0" />
-              <stop offset="50%" stop-color="#e0a458" />
-              <stop offset="100%" stop-color="#6e4522" />
+              <stop offset="0%" stop-color="#ffe1a9"/>
+              <stop offset="50%" stop-color="#d7a568"/>
+              <stop offset="100%" stop-color="#67492e"/>
             </radialGradient>
 
             <linearGradient id="gradConn" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="#4ee2c0" stop-opacity="0.75" />
-              <stop offset="100%" stop-color="#b479ff" stop-opacity="0.75" />
+              <stop offset="0%" stop-color="#4ee2c0" stop-opacity=".75"/>
+              <stop offset="100%" stop-color="#b479ff" stop-opacity=".75"/>
             </linearGradient>
 
             <linearGradient id="gradFloor" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stop-color="#1a1220" stop-opacity="0" />
-              <stop offset="100%" stop-color="#241708" stop-opacity="0.55" />
+              <stop offset="0%" stop-color="#1a1220" stop-opacity="0"/>
+              <stop offset="100%" stop-color="#241708" stop-opacity=".55"/>
             </linearGradient>
 
             <filter id="membraneGlow" x="-60%" y="-60%" width="220%" height="220%">
-              <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur" />
-
+              <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
               <feColorMatrix
                 in="blur"
                 type="matrix"
@@ -131,10 +113,9 @@
                 "
                 result="glow"
               />
-
               <feMerge>
-                <feMergeNode in="glow" />
-                <feMergeNode in="SourceGraphic" />
+                <feMergeNode in="glow"/>
+                <feMergeNode in="SourceGraphic"/>
               </feMerge>
             </filter>
           </defs>
@@ -142,70 +123,78 @@
           <g id="camera"></g>
         </svg>
 
-        <div class="hintBar" id="hintBar"></div>
+        <div class="hintBar" id="hintBar" role="status"></div>
 
         <div class="zoomCtl">
-          <button id="zoomIn" aria-label="Aumentar zoom">+</button>
-          <button id="zoomReset" aria-label="Redefinir zoom">⟳</button>
-          <button id="zoomOut" aria-label="Diminuir zoom">−</button>
+          <button id="zoomIn" type="button" aria-label="Aumentar zoom">+</button>
+          <button id="zoomReset" type="button" aria-label="Enquadrar organismo">⟳</button>
+          <button id="zoomOut" type="button" aria-label="Diminuir zoom">−</button>
         </div>
       </div>
 
-      <button class="btn ghost" id="historyToggle">Histórico ▾</button>
+      <button class="btn ghost" id="historyToggle" type="button">Histórico</button>
 
-      <div id="historyPanel">
+      <div id="historyPanel" aria-label="Histórico de tarefas concluídas">
         <div class="hHead">
           <h3>Sedimento resolvido</h3>
-          <button id="historyClose" aria-label="Fechar histórico">✕</button>
+          <button id="historyClose" type="button" aria-label="Fechar histórico">✕</button>
         </div>
-
         <div id="historyList"></div>
       </div>
     </main>
   </div>
 
   <div id="overlay">
-    <div id="modal">
-      <h2 id="modalTitle" class="serif">Nova tarefa</h2>
+    <form id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h2 id="modalTitle">Nova tarefa</h2>
+      <p class="hint" id="modalHint"></p>
 
-      <div class="hint" id="modalHint">
-        Descreva a tarefa e, se necessário, vincule-a como pré-requisito.
+      <div class="field">
+        <label for="fieldKeyword">Palavra-chave *</label>
+        <div class="keywordRow">
+          <input
+            type="text"
+            id="fieldKeyword"
+            maxlength="60"
+            required
+            autocomplete="off"
+            placeholder="Nome da tarefa"
+          >
+          <button class="btn" id="modalSave" type="submit">Salvar</button>
+        </div>
       </div>
 
       <div class="field">
-        <label>Palavra-chave</label>
-        <input
-          type="text"
-          id="fieldKeyword"
-          maxlength="60"
-          placeholder="ex.: Levantar dados de conexão"
-        >
+        <label for="fieldType">Tipo</label>
+        <select id="fieldType">
+          <option value="pessoal">Pessoal · círculo</option>
+          <option value="terceiros">Terceiros · quadrado</option>
+          <option value="familia">Família · ovoide</option>
+          <option value="trabalho">Trabalho · hexágono</option>
+        </select>
       </div>
 
       <div class="field">
-        <label>Descrição (opcional)</label>
-        <textarea id="fieldDesc" placeholder="Detalhes adicionais…"></textarea>
+        <label for="fieldDesc">Descrição (opcional)</label>
+        <textarea id="fieldDesc" maxlength="600" placeholder="Detalhes adicionais…"></textarea>
       </div>
 
       <div class="field" id="prereqField">
-        <label>Vincular como pré-requisito de</label>
-
+        <label for="fieldPrereq">Vincular como pré-requisito de</label>
         <select id="fieldPrereq">
           <option value="">Nenhum (tarefa raiz)</option>
         </select>
       </div>
 
       <div class="modalActions">
-        <button class="btn ghost" id="modalCancel">Cancelar</button>
-        <button class="btn" id="modalSave">Salvar</button>
+        <button class="btn ghost" id="modalCancel" type="button">Cancelar</button>
       </div>
-    </div>
+    </form>
   </div>
 
-  <div id="toasts"></div>
+  <div id="toasts" role="status" aria-live="polite"></div>
 
   <script src="./core.js"></script>
   <script src="./app.js"></script>
 </body>
-
 </html>
