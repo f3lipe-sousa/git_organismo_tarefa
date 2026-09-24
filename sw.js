@@ -5,10 +5,10 @@ const CACHE_NAME = "organismo-de-tarefas-v1";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./manifest.webmanifest",
+  "./manifest.json",
   "./style.css",
-  "./js/core.js",
-  "./js/app.js",
+  "./core.js",
+  "./app.js",
   "./icon-192.png",
   "./icon-512.png"
 ];
