@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Organismo de Tarefas</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#05060a">
+
+<link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Organismo">
+
+  
+</head>
+
+<body>
+  <div id="app">
+    <header>
+      <div class="brand">
+        <span class="dot"></span>
+        <h1>Organismo de Tarefas</h1>
+        <span class="sub">&nbsp;— fluxo vivo de trabalho</span>
+      </div>
+
+      <div class="lifeControls" id="lifeControls" title="Motor de vida do organismo">
+        <button id="pauseBtn" class="running">⏸ Vida ativa</button>
+        <span class="speedLabel" id="speedLabel">1.0x</span>
+        <button id="speedDown">−</button>
+        <button id="speedUp">+</button>
+      </div>
+
+      <div class="viewToggle">
+        <button id="toListBtn" class="active">Lista</button>
+        <button id="toOrgBtn">Organismo</button>
+      </div>
+
+      <div class="ioGroup">
+        <button class="btn ghost" id="exportBtn" title="Exportar tarefas (JSON, com hierarquia)">
+          Exportar
+        </button>
+
+        <button class="btn ghost" id="importBtn" title="Importar tarefas de um arquivo JSON">
+          Importar
+        </button>
+
+        <input type="file" id="importFile" accept="application/json" hidden>
+
+        <button class="btn ghost danger" id="resetBtn" title="Apagar todos os registros">
+          Reset
+        </button>
+      </div>
+
+      <button class="btn" id="newTaskBtn">+ Nova tarefa</button>
+    </header>
+
+    <main>
+      <div id="listView" class="active">
+        <div class="treeRoot" id="treeRoot"></div>
+      </div>
+
+      <div id="organismWrap">
+        <!--
+          O viewBox será atualizado dinamicamente pelo app.js
+          conforme a área realmente disponível na tela.
+        -->
+        <svg
+          id="organism"
+          viewBox="0 0 1 1"
+          preserveAspectRatio="none"
+          role="img"
+          aria-label="Visualização do organismo de tarefas"
+        >
+          <defs>
+            <radialGradient id="gradCyan" cx="35%" cy="30%" r="75%">
+              <stop offset="0%" stop-color="#d9fff5" />
+              <stop offset="45%" stop-color="#4ee2c0" />
+              <stop offset="100%" stop-color="#136a58" />
+            </radialGradient>
+
+            <radialGradient id="gradViolet" cx="35%" cy="30%" r="75%">
+              <stop offset="0%" stop-color="#efd9ff" />
+              <stop offset="45%" stop-color="#b479ff" />
+              <stop offset="100%" stop-color="#5a2f96" />
+            </radialGradient>
+
+            <radialGradient id="gradBlue" cx="35%" cy="30%" r="75%">
+              <stop offset="0%" stop-color="#d6ecff" />
+              <stop offset="45%" stop-color="#5ba8ff" />
+              <stop offset="100%" stop-color="#20477f" />
+            </radialGradient>
+
+            <radialGradient id="gradTeal" cx="35%" cy="30%" r="75%">
+              <stop offset="0%" stop-color="#c9fff0" />
+              <stop offset="45%" stop-color="#33bfa0" />
+              <stop offset="100%" stop-color="#0f5c4d" />
+            </radialGradient>
+
+            <radialGradient id="gradSediment" cx="35%" cy="25%" r="80%">
+              <stop offset="0%" stop-color="#ffdca0" />
+              <stop offset="50%" stop-color="#e0a458" />
+              <stop offset="100%" stop-color="#6e4522" />
+            </radialGradient>
+
+            <linearGradient id="gradConn" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#4ee2c0" stop-opacity="0.75" />
+              <stop offset="100%" stop-color="#b479ff" stop-opacity="0.75" />
+            </linearGradient>
+
+            <linearGradient id="gradFloor" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="#1a1220" stop-opacity="0" />
+              <stop offset="100%" stop-color="#241708" stop-opacity="0.55" />
+            </linearGradient>
+
+            <filter id="membraneGlow" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur" />
+
+              <feColorMatrix
+                in="blur"
+                type="matrix"
+                values="
+                  0 0 0 0 0.20
+                  0 0 0 0 0.95
+                  0 0 0 0 0.78
+                  0 0 0 0.55 0
+                "
+                result="glow"
+              />
+
+              <feMerge>
+                <feMergeNode in="glow" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+
+          <g id="camera"></g>
+        </svg>
+
+        <div class="hintBar" id="hintBar"></div>
+
+        <div class="zoomCtl">
+          <button id="zoomIn" aria-label="Aumentar zoom">+</button>
+          <button id="zoomReset" aria-label="Redefinir zoom">⟳</button>
+          <button id="zoomOut" aria-label="Diminuir zoom">−</button>
+        </div>
+      </div>
+
+      <button class="btn ghost" id="historyToggle">Histórico ▾</button>
+
+      <div id="historyPanel">
+        <div class="hHead">
+          <h3>Sedimento resolvido</h3>
+          <button id="historyClose" aria-label="Fechar histórico">✕</button>
+        </div>
+
+        <div id="historyList"></div>
+      </div>
+    </main>
+  </div>
+
+  <div id="overlay">
+    <div id="modal">
+      <h2 id="modalTitle" class="serif">Nova tarefa</h2>
+
+      <div class="hint" id="modalHint">
+        Descreva a tarefa e, se necessário, vincule-a como pré-requisito.
+      </div>
+
+      <div class="field">
+        <label>Palavra-chave</label>
+        <input
+          type="text"
+          id="fieldKeyword"
+          maxlength="60"
+          placeholder="ex.: Levantar dados de conexão"
+        >
+      </div>
+
+      <div class="field">
+        <label>Descrição (opcional)</label>
+        <textarea id="fieldDesc" placeholder="Detalhes adicionais…"></textarea>
+      </div>
+
+      <div class="field" id="prereqField">
+        <label>Vincular como pré-requisito de</label>
+
+        <select id="fieldPrereq">
+          <option value="">Nenhum (tarefa raiz)</option>
+        </select>
+      </div>
+
+      <div class="modalActions">
+        <button class="btn ghost" id="modalCancel">Cancelar</button>
+        <button class="btn" id="modalSave">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toasts"></div>
+
+  <script src="js/core.js"></script>
+  <script src="js/app.js"></script>
+</body>
+
+</html>
