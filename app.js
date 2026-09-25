@@ -433,9 +433,11 @@
         break;
 
       case "familia":
-        shape = document.createElementNS(SVG_NS, "ellipse");
-        shape.setAttribute("rx", radius * 0.78);
-        shape.setAttribute("ry", radius * 1.12);
+        shape = document.createElementNS(SVG_NS, "polygon");
+        shape.setAttribute(
+            "points",
+            `0,${-radius} ${radius},0 0,${radius} ${-radius},0`
+        );
         break;
 
       case "trabalho": {
