@@ -4,10 +4,6 @@
   const STORAGE_KEY = "organismo-de-tarefas-v2";
   const LEGACY_KEY = "organismo-de-tarefas-v1";
 
-  // Dimensões iniciais usadas somente até o app medir a área real do SVG.
-  const WORLD = { w: 1200, h: 800, padding: 48 };
-  const CENTER = { x: 600, y: 400 };
-
   const TYPES = Object.freeze({
     pessoal: "Pessoal",
     terceiros: "Terceiros",
@@ -15,119 +11,131 @@
     trabalho: "Trabalho"
   });
 
+  const URGENCIES = Object.freeze({
+    1: { label: "1 · Máxima", days: 7 },
+    2: { label: "2 · Alta", days: 15 },
+    3: { label: "3 · Média", days: 30 },
+    4: { label: "4 · Baixa", days: 90 },
+    5: { label: "5 · Mínima", days: 180 }
+  });
+
+  const WORLD = { w: 1200, h: 800, padding: 28 };
+  const CENTER = { x: 600, y: 400 };
   const tasks = new Map();
+  let savedLayout = null;
+  let storageFailed = false;
 
-  function clamp(value, min, max) {
-    return Math.max(min, Math.min(max, value));
-  }
+  const clamp = (value, min, max) =>
+    Math.max(min, Math.min(max, value));
 
-  function finiteOr(value, fallback) {
+  function finite(value, fallback) {
     return typeof value === "number" && Number.isFinite(value)
       ? value
       : fallback;
   }
 
-  function timestampOr(value, fallback) {
-    const number = Number(value);
-    return Number.isFinite(number) && number > 0 ? number : fallback;
+  function today() {
+    const date = new Date();
+    return [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0")
+    ].join("-");
   }
 
-  function storedWorld(source) {
+  function validDate(value) {
+    if (typeof value !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+
+    const [year, month, day] = value.split("-").map(Number);
+    if (year < 1 || year > 9999) return false;
+
+    const date = new Date(0);
+    date.setFullYear(year, month - 1, day);
+    date.setHours(12, 0, 0, 0);
+
+    return date.getFullYear() === year &&
+      date.getMonth() === month - 1 &&
+      date.getDate() === day;
+  }
+
+  function dateFromTimestamp(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return today();
+
+    return [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0")
+    ].join("-");
+  }
+
+  function dayNumber(value) {
+    const [year, month, day] = value.split("-").map(Number);
+    const date = new Date(0);
+    date.setUTCFullYear(year, month - 1, day);
+    date.setUTCHours(0, 0, 0, 0);
+    return Math.floor(date.getTime() / 86400000);
+  }
+
+  function ageDays(task) {
+    return Math.max(0, dayNumber(today()) - dayNumber(task.startDate));
+  }
+
+  function appearance(task) {
+    const age = ageDays(task);
+    const days = URGENCIES[task.urgency].days;
+    const progress = clamp(age / days, 0, 1);
+
     return {
-      w: Number.isFinite(source?.w) && source.w > 0 ? source.w : 1200,
-      h: Number.isFinite(source?.h) && source.h > 0 ? source.h : 800
+      age,
+      days,
+      progress,
+      radius: task.completed ? 18 : 20 + 40 * progress,
+      hue: 166 - 166 * progress,
+      alert: !task.completed && progress >= 1
     };
-  }
-
-  function getBounds() {
-    return {
-      w: WORLD.w,
-      h: WORLD.h,
-      padding: WORLD.padding,
-      centerX: CENTER.x,
-      centerY: CENTER.y,
-      sedimentTop: WORLD.h - Math.min(145, WORLD.h * 0.18)
-    };
-  }
-
-  function setWorldBounds(width, height) {
-    if (!Number.isFinite(width) || !Number.isFinite(height) ||
-        width < 1 || height < 1) {
-      return getBounds();
-    }
-
-    const nextWidth = Math.round(width);
-    const nextHeight = Math.round(height);
-
-    if (nextWidth === WORLD.w && nextHeight === WORLD.h) {
-      return getBounds();
-    }
-
-    const previousWidth = WORLD.w;
-    const previousHeight = WORLD.h;
-
-    WORLD.w = nextWidth;
-    WORLD.h = nextHeight;
-    WORLD.padding = Math.min(
-      82,
-      Math.max(24, Math.min(WORLD.w, WORLD.h) * 0.14)
-    );
-
-    CENTER.x = WORLD.w / 2;
-    CENTER.y = WORLD.h / 2;
-
-    for (const task of tasks.values()) {
-      if (task.completed) continue;
-
-      task.x = task.x / previousWidth * WORLD.w;
-      task.y = task.y / previousHeight * WORLD.h;
-    }
-
-    clampAllPositions();
-    save();
-
-    return getBounds();
   }
 
   function uid() {
     let id;
-
     do {
       id = "t_" + Date.now().toString(36) +
-        Math.random().toString(36).slice(2, 10);
+        Math.random().toString(36).slice(2, 11);
     } while (tasks.has(id));
-
     return id;
   }
 
-  function sanitize(source) {
+  function sanitize(source, id = source.id) {
+    const type = String(source.type || "pessoal").toLowerCase();
+    const urgency = Number(source.urgency);
     const completed = !!source.completed;
-    const rawType = String(source.type || "pessoal").toLowerCase();
+    const completedAt = Number(source.completedAt);
 
     return {
-      id: String(source.id),
-      keyword:
-        String(source.keyword || "Sem nome").trim().slice(0, 120) ||
-        "Sem nome",
+      id,
+      keyword: String(source.keyword || "Sem nome").trim()
+        .slice(0, 120) || "Sem nome",
       description: String(source.description || "").slice(0, 600),
-      type: Object.prototype.hasOwnProperty.call(TYPES, rawType)
-        ? rawType
-        : "pessoal",
+      type: Object.hasOwn(TYPES, type) ? type : "pessoal",
+      urgency: Object.hasOwn(URGENCIES, urgency) ? urgency : 3,
+      startDate: validDate(source.startDate)
+        ? source.startDate
+        : source.createdAt
+          ? dateFromTimestamp(source.createdAt)
+          : today(),
       completed,
-      parents: Array.isArray(source.parents)
-        ? [...new Set(source.parents.filter(id => typeof id === "string"))]
-        : [],
-      x: finiteOr(source.x, CENTER.x),
-      y: finiteOr(source.y, CENTER.y),
-      createdAt: timestampOr(source.createdAt, Date.now()),
       completedAt: completed
-        ? timestampOr(source.completedAt, null)
+        ? Number.isFinite(completedAt) && completedAt > 0
+          ? completedAt
+          : Date.now()
         : null,
-      sedimentIndex:
-        Number.isInteger(source.sedimentIndex) &&
-        source.sedimentIndex >= 0
-          ? source.sedimentIndex
-          : null
+      parents: Array.isArray(source.parents)
+        ? [...new Set(source.parents.filter(id =>
+            typeof id === "string" && id.length > 0))]
+        : [],
+      x: finite(source.x, CENTER.x),
+      y: finite(source.y, CENTER.y)
     };
   }
 
@@ -140,11 +148,7 @@
   }
 
   function getParents(id) {
-    const task = get(id);
-
-    return task
-      ? task.parents.map(parentId => get(parentId)).filter(Boolean)
-      : [];
+    return (get(id)?.parents || []).map(get).filter(Boolean);
   }
 
   function getChildren(id) {
@@ -155,28 +159,16 @@
     return all().filter(task => !task.completed);
   }
 
-  function getRootTasks() {
-    const active = getActiveTasks();
-    const prerequisites = new Set(
-      active.flatMap(task => task.parents)
-    );
-
-    return active.filter(task => !prerequisites.has(task.id));
-  }
-
   function getAncestors(id) {
     const found = new Set();
-    const stack = get(id)?.parents.slice() || [];
+    const stack = [...(get(id)?.parents || [])];
 
     while (stack.length) {
       const parentId = stack.pop();
-
       if (found.has(parentId) || !get(parentId)) continue;
-
       found.add(parentId);
       stack.push(...get(parentId).parents);
     }
-
     return found;
   }
 
@@ -184,403 +176,384 @@
     return getAncestors(id).size;
   }
 
-  function getDepth(id) {
-    const memo = new Map();
-
-    function depth(taskId, visiting) {
-      if (memo.has(taskId)) return memo.get(taskId);
-      if (visiting.has(taskId)) return 0;
-
-      const task = get(taskId);
-      if (!task || !task.parents.length) return 0;
-
-      visiting.add(taskId);
-
-      const result = 1 + Math.max(
-        ...task.parents.map(parentId => depth(parentId, visiting))
-      );
-
-      visiting.delete(taskId);
-      memo.set(taskId, result);
-      return result;
-    }
-
-    return depth(id, new Set());
-  }
-
-  function limits() {
-    const paddingX = Math.min(WORLD.padding, WORLD.w / 2);
-    const paddingY = Math.min(WORLD.padding, WORLD.h / 2);
-
-    return {
-      minX: paddingX,
-      maxX: WORLD.w - paddingX,
-      minY: paddingY,
-      maxY: WORLD.h - paddingY
-    };
-  }
-
-  function sedimentPosition(index) {
-    const area = limits();
-    const usableWidth = area.maxX - area.minX;
-    const perRow = Math.max(1, Math.floor(usableWidth / 90) + 1);
-    const row = Math.floor(index / perRow);
-    const col = index % perRow;
-    const step = perRow > 1 ? usableWidth / (perRow - 1) : 0;
-
-    return {
-      x: clamp(
-        area.minX + col * step + (row % 2 ? step * 0.25 : 0),
-        area.minX,
-        area.maxX
-      ),
-      y: clamp(
-        area.maxY - 12 - row * 42,
-        area.minY,
-        area.maxY
-      )
-    };
-  }
-
-  function clampAllPositions() {
-    const area = limits();
-
-    for (const task of tasks.values()) {
-      if (task.completed) {
-        const position = sedimentPosition(task.sedimentIndex ?? 0);
-        task.x = position.x;
-        task.y = position.y;
-      } else {
-        task.x = clamp(
-          finiteOr(task.x, CENTER.x),
-          area.minX,
-          area.maxX
-        );
-        task.y = clamp(
-          finiteOr(task.y, CENTER.y),
-          area.minY,
-          area.maxY
-        );
-      }
-    }
-  }
-
-  function wouldCycle(prereqId, taskId) {
-    return getAncestors(prereqId).has(taskId);
-  }
-
-  function restore(data) {
-    const next = new Map();
-    const requestedParents = new Map();
-    const history = Array.isArray(data.history) ? data.history : [];
-    const historyOrder = new Map();
-
-    history.forEach((item, index) => {
-      if (item && typeof item.id === "string" &&
-          !historyOrder.has(item.id)) {
-        historyOrder.set(item.id, index);
-      }
-    });
-
-    for (const source of data.tasks) {
-      if (!source || typeof source !== "object" ||
-          typeof source.id !== "string" || !source.id) {
-        continue;
-      }
-
-      const task = sanitize(source);
-      requestedParents.set(task.id, task.parents);
-      task.parents = [];
-      next.set(task.id, task);
-    }
-
-    tasks.clear();
-
-    for (const [id, task] of next) {
-      tasks.set(id, task);
-    }
-
-    for (const [id, parents] of requestedParents) {
-      const task = get(id);
-      if (task.completed) continue;
-
-      for (const parentId of parents) {
-        const parent = get(parentId);
-
-        if (!parent || parent.completed || parentId === id ||
-            task.parents.includes(parentId) ||
-            wouldCycle(parentId, id)) {
-          continue;
-        }
-
-        task.parents.push(parentId);
-      }
-    }
-
-    const completed = all().filter(task => task.completed);
-
-    completed.sort((a, b) => {
-      const positionA =
-        a.sedimentIndex ?? historyOrder.get(a.id) ?? Infinity;
-      const positionB =
-        b.sedimentIndex ?? historyOrder.get(b.id) ?? Infinity;
-
-      return positionA - positionB ||
-        (a.completedAt || a.createdAt) -
-        (b.completedAt || b.createdAt);
-    });
-
-    completed.forEach((task, index) => {
-      task.sedimentIndex = index;
-
-      if (!task.completedAt) {
-        const record = history.find(
-          item => item && item.id === task.id
-        );
-
-        task.completedAt = timestampOr(
-          record?.completedAt,
-          task.createdAt
-        );
-      }
-    });
-
-    // Arquivos anteriores não registravam as dimensões do mundo.
-    // Nesse caso, usa-se o mundo original de 1200 × 800.
-    const original = storedWorld(data.world);
-
-    for (const task of tasks.values()) {
-      if (task.completed) continue;
-
-      task.x = task.x / original.w * WORLD.w;
-      task.y = task.y / original.h * WORLD.h;
-    }
-
-    clampAllPositions();
-  }
-
-  function getHistory() {
-    return all()
-      .filter(task => task.completed)
-      .sort((a, b) => a.sedimentIndex - b.sedimentIndex)
-      .map(task => ({
-        id: task.id,
-        completedAt: task.completedAt
-      }));
-  }
-
-  function save() {
-    try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          world: { w: WORLD.w, h: WORLD.h },
-          tasks: all(),
-          history: getHistory()
-        })
-      );
-
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function load() {
-    try {
-      const raw =
-        localStorage.getItem(STORAGE_KEY) ||
-        localStorage.getItem(LEGACY_KEY);
-
-      if (!raw) return;
-
-      const data = JSON.parse(raw);
-
-      if (data && Array.isArray(data.tasks)) {
-        restore(data);
-      }
-    } catch {
-      tasks.clear();
-    }
-  }
-
-  function createTask({ keyword, description, type, prereqOfId }) {
-    const task = sanitize({
-      id: uid(),
-      keyword,
-      description,
-      type,
-      parents: [],
-      x: CENTER.x + Math.random() * 180 - 90,
-      y: CENTER.y + Math.random() * 160 - 80,
-      createdAt: Date.now()
-    });
-
-    tasks.set(task.id, task);
-
-    const dependent = get(prereqOfId);
-
-    if (dependent && !dependent.completed) {
-      dependent.parents.push(task.id);
-    }
-
-    clampAllPositions();
-    save();
-    return task;
-  }
-
-  function editTask(id, { keyword, description, type }) {
-    const task = get(id);
-    if (!task || task.completed) return null;
-
-    const updated = sanitize({
-      ...task,
-      keyword,
-      description,
-      type
-    });
-
-    task.keyword = updated.keyword;
-    task.description = updated.description;
-    task.type = updated.type;
-
-    save();
-    return task;
-  }
-
-  function deleteTask(id) {
-    if (!tasks.delete(id)) return false;
-
-    for (const task of tasks.values()) {
-      task.parents = task.parents.filter(
-        parentId => parentId !== id
-      );
-    }
-
-    save();
-    return true;
-  }
-
-  function connectTask(prereqId, taskId) {
-    if (prereqId === taskId) {
-      return { ok: false, reason: "same" };
-    }
-
-    const prerequisite = get(prereqId);
-    const task = get(taskId);
-
-    if (!prerequisite || !task) {
-      return { ok: false, reason: "missing" };
-    }
-
-    if (prerequisite.completed || task.completed) {
-      return { ok: false, reason: "completed" };
-    }
-
-    if (task.parents.includes(prereqId)) {
-      return { ok: false, reason: "exists" };
-    }
-
-    if (wouldCycle(prereqId, taskId)) {
-      return { ok: false, reason: "cycle" };
-    }
-
-    task.parents.push(prereqId);
-    save();
-    return { ok: true };
-  }
-
-  function toggleComplete(id) {
-    const task = get(id);
-
-    if (!task) return { ok: false, reason: "missing" };
-    if (task.completed) return { ok: false, reason: "already" };
-
-    if (getParents(id).some(parent => !parent.completed)) {
-      return { ok: false, reason: "blocked" };
-    }
-
-    task.completed = true;
-    task.completedAt = Date.now();
-    task.sedimentIndex =
-      all().filter(item => item.completed).length - 1;
-
-    for (const other of tasks.values()) {
-      other.parents = other.parents.filter(
-        parentId => parentId !== id
-      );
-    }
-
-    task.parents = [];
-
-    const position = sedimentPosition(task.sedimentIndex);
-    task.x = position.x;
-    task.y = position.y;
-
-    save();
-    return { ok: true };
+  function getRootTasks() {
+    const active = getActiveTasks();
+    const used = new Set(active.flatMap(task => task.parents));
+    return active.filter(task => !used.has(task.id));
   }
 
   function updatePosition(id, x, y) {
     const task = get(id);
     if (!task || task.completed) return;
 
-    const area = limits();
+    const radius = appearance(task).radius;
+    const mx = Math.min(radius + 8, WORLD.w / 2);
+    const my = Math.min(radius + 24, WORLD.h / 2);
 
-    task.x = clamp(
-      finiteOr(x, task.x),
-      area.minX,
-      area.maxX
-    );
-
-    // Células vivas podem ocupar toda a altura, inclusive a região
-    // onde o gradiente visual do sedimento aparece.
-    task.y = clamp(
-      finiteOr(y, task.y),
-      area.minY,
-      area.maxY
-    );
+    task.x = clamp(finite(x, task.x), mx, WORLD.w - mx);
+    task.y = clamp(finite(y, task.y), my, WORLD.h - my);
   }
 
-  function exportData() {
-    return JSON.stringify({
-      exportedAt: new Date().toISOString(),
-      world: { w: WORLD.w, h: WORLD.h },
-      tasks: all(),
-      history: getHistory()
-    }, null, 2);
+  function placeSediment() {
+    const completed = all().filter(task => task.completed)
+      .sort((a, b) => a.completedAt - b.completedAt);
+
+    const columns = Math.max(1, Math.floor(WORLD.w / 65));
+
+    completed.forEach((task, index) => {
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+      task.x = (column + 0.5) * WORLD.w / columns;
+      task.y = Math.max(22, WORLD.h - 28 - row * 42);
+    });
   }
 
-  function importData(raw) {
-    let data;
+  function clampPositions() {
+    getActiveTasks().forEach(task =>
+      updatePosition(task.id, task.x, task.y));
+    placeSediment();
+  }
 
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      return { ok: false, reason: "parse" };
+  function setWorldBounds(width, height) {
+    if (!Number.isFinite(width) || !Number.isFinite(height) ||
+        width < 1 || height < 1) return;
+
+    width = Math.round(width);
+    height = Math.round(height);
+    if (WORLD.w === width && WORLD.h === height) return;
+
+    const oldWidth = WORLD.w;
+    const oldHeight = WORLD.h;
+
+    WORLD.w = width;
+    WORLD.h = height;
+    CENTER.x = width / 2;
+    CENTER.y = height / 2;
+
+    getActiveTasks().forEach(task => {
+      task.x = task.x / oldWidth * width;
+      task.y = task.y / oldHeight * height;
+    });
+
+    clampPositions();
+  }
+
+  function connectInternal(prereqId, taskId) {
+    if (prereqId === taskId) return { ok: false, reason: "same" };
+
+    const prerequisite = get(prereqId);
+    const task = get(taskId);
+
+    if (!prerequisite || !task)
+      return { ok: false, reason: "missing" };
+
+    if (prerequisite.completed || task.completed)
+      return { ok: false, reason: "completed" };
+
+    if (task.parents.includes(prereqId))
+      return { ok: false, reason: "exists" };
+
+    if (getAncestors(prereqId).has(taskId))
+      return { ok: false, reason: "cycle" };
+
+    task.parents.push(prereqId);
+    return { ok: true };
+  }
+
+  function connectTask(prereqId, taskId) {
+    const result = connectInternal(prereqId, taskId);
+    if (result.ok) save();
+    return result;
+  }
+
+  function disconnectTask(prereqId, taskId) {
+    const task = get(taskId);
+    if (!task || task.completed) return false;
+
+    task.parents = task.parents.filter(id => id !== prereqId);
+    save();
+    return true;
+  }
+
+  function createTask(values) {
+    const task = sanitize({
+      ...values,
+      id: uid(),
+      completed: false,
+      parents: [],
+      x: CENTER.x + Math.random() * 140 - 70,
+      y: CENTER.y + Math.random() * 140 - 70
+    });
+
+    tasks.set(task.id, task);
+
+    if (values.targetId) {
+      if (values.relation === "prerequisite") {
+        connectInternal(task.id, values.targetId);
+      } else if (values.relation === "dependent") {
+        connectInternal(values.targetId, task.id);
+      }
     }
 
-    if (!data || !Array.isArray(data.tasks) ||
-        data.tasks.some(task =>
-          !task || typeof task !== "object" ||
-          typeof task.id !== "string" || !task.id
-        )) {
-      return { ok: false, reason: "shape" };
+    clampPositions();
+    save();
+    return task;
+  }
+
+  function editTask(id, values) {
+    const task = get(id);
+    if (!task || task.completed) return false;
+
+    const updated = sanitize({ ...task, ...values, id });
+    for (const key of [
+      "keyword", "description", "type", "urgency", "startDate"
+    ]) {
+      task[key] = updated[key];
     }
 
-    restore(data);
+    clampPositions();
+    save();
+    return true;
+  }
+
+  function deleteTask(id) {
+    if (!tasks.delete(id)) return false;
+
+    all().forEach(task => {
+      task.parents = task.parents.filter(parentId => parentId !== id);
+    });
+
+    if (savedLayout) delete savedLayout.positions[id];
+    placeSediment();
+    save();
+    return true;
+  }
+
+  function completeTask(id) {
+    const task = get(id);
+    if (!task || task.completed)
+      return { ok: false, reason: "missing" };
+
+    if (getParents(id).some(parent => !parent.completed))
+      return { ok: false, reason: "blocked" };
+
+    task.completed = true;
+    task.completedAt = Date.now();
+    task.parents = [];
+
+    all().forEach(other => {
+      other.parents = other.parents.filter(parentId => parentId !== id);
+    });
+
+    if (savedLayout) delete savedLayout.positions[id];
+    placeSediment();
     save();
     return { ok: true };
   }
 
+  function saveLayout() {
+    const positions = Object.create(null);
+    getActiveTasks().forEach(task => {
+      positions[task.id] = {
+        x: task.x / WORLD.w,
+        y: task.y / WORLD.h
+      };
+    });
+
+    savedLayout = {
+      savedAt: new Date().toISOString(),
+      positions
+    };
+
+    save();
+  }
+
+  function restoreLayout() {
+    if (!savedLayout) return 0;
+
+    let count = 0;
+    getActiveTasks().forEach(task => {
+      const position = savedLayout.positions[task.id];
+      if (!position) return;
+
+      updatePosition(
+        task.id,
+        position.x * WORLD.w,
+        position.y * WORLD.h
+      );
+      count++;
+    });
+
+    save();
+    return count;
+  }
+
+  function sanitizeLayout(source) {
+    if (!source || !source.positions ||
+        typeof source.positions !== "object") return null;
+
+    const positions = Object.create(null);
+
+    for (const [id, position] of Object.entries(source.positions)) {
+      if (!get(id) || get(id).completed || !position ||
+          !Number.isFinite(position.x) ||
+          !Number.isFinite(position.y)) continue;
+
+      positions[id] = {
+        x: clamp(position.x, 0, 1),
+        y: clamp(position.y, 0, 1)
+      };
+    }
+
+    return {
+      savedAt: typeof source.savedAt === "string"
+        ? source.savedAt
+        : null,
+      positions
+    };
+  }
+
+  function data() {
+    return {
+      schemaVersion: 3,
+      world: { w: WORLD.w, h: WORLD.h },
+      tasks: all(),
+      layout: savedLayout
+    };
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data()));
+      storageFailed = false;
+      return true;
+    } catch {
+      storageFailed = true;
+      return false;
+    }
+  }
+
+  function validImport(data) {
+    return data && Array.isArray(data.tasks) &&
+      data.tasks.every(task =>
+        task && typeof task === "object" &&
+        typeof task.id === "string" && task.id.length > 0);
+  }
+
+  function ingest(data, merge) {
+    const sourceWidth = finite(data.world?.w, 1200) > 0
+      ? finite(data.world?.w, 1200)
+      : 1200;
+
+    const sourceHeight = finite(data.world?.h, 800) > 0
+      ? finite(data.world?.h, 800)
+      : 800;
+
+    if (!merge) {
+      tasks.clear();
+      savedLayout = null;
+    }
+
+    const pending = new Map();
+    let added = 0;
+    let skipped = 0;
+    let ignoredLinks = 0;
+
+    for (const source of data.tasks) {
+      if (tasks.has(source.id)) {
+        skipped++;
+        continue;
+      }
+
+      const task = sanitize(source);
+
+      if (task.completed && !source.completedAt) {
+        const record = Array.isArray(data.history)
+          ? data.history.find(item => item?.id === task.id)
+          : null;
+
+        task.completedAt = Number(record?.completedAt) > 0
+          ? Number(record.completedAt)
+          : Number(source.createdAt) > 0
+            ? Number(source.createdAt)
+            : Date.now();
+      }
+
+      pending.set(task.id, task.parents);
+      task.parents = [];
+      task.x = task.x / sourceWidth * WORLD.w;
+      task.y = task.y / sourceHeight * WORLD.h;
+      tasks.set(task.id, task);
+      added++;
+    }
+
+    for (const [id, parents] of pending) {
+      if (get(id).completed) continue;
+
+      for (const parentId of parents) {
+        const parent = get(parentId);
+
+        // Um pré-requisito já concluído está satisfeito:
+        // não é necessário recriar essa ligação.
+        if (parent?.completed) continue;
+
+        const result = connectInternal(parentId, id);
+        if (!result.ok) ignoredLinks++;
+      }
+    }
+
+    // Mesclar tarefas não altera a memória de posições já existente.
+    if (!merge) savedLayout = sanitizeLayout(data.layout);
+
+    clampPositions();
+    return { added, skipped, ignoredLinks };
+  }
+
+  function importData(raw) {
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { ok: false, reason: "parse" };
+    }
+
+    if (!validImport(parsed))
+      return { ok: false, reason: "shape" };
+
+    const result = ingest(parsed, true);
+    const persisted = save();
+    return { ok: true, persisted, ...result };
+  }
+
+  function exportData() {
+    return JSON.stringify({
+      ...data(),
+      exportedAt: new Date().toISOString()
+    }, null, 2);
+  }
+
   function resetAll() {
     tasks.clear();
+    savedLayout = null;
 
     try {
       localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(LEGACY_KEY);
     } catch {
-      // O estado desta sessão continua apagado.
+      storageFailed = true;
+    }
+  }
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY) ||
+        localStorage.getItem(LEGACY_KEY);
+
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (validImport(parsed)) ingest(parsed, false);
+    } catch {
+      storageFailed = true;
     }
   }
 
@@ -595,22 +568,30 @@
       getActiveTasks,
       getRootTasks,
       getWeight,
-      getDepth,
       createTask,
       editTask,
       deleteTask,
       connectTask,
-      toggleComplete,
+      disconnectTask,
+      completeTask,
       updatePosition,
       save,
       exportData,
       importData,
-      resetAll
+      resetAll,
+      saveLayout,
+      restoreLayout,
+      hasLayout: () => !!savedLayout,
+      hasStorageError: () => storageFailed
     },
+    TYPES,
+    URGENCIES,
     WORLD,
     CENTER,
-    TYPES,
-    getBounds,
+    today,
+    validDate,
+    ageDays,
+    appearance,
     setWorldBounds
   };
 })();

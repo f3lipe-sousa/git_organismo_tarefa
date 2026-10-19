@@ -1,7 +1,7 @@
 "use strict";
 
 const CACHE_PREFIX = "organismo-de-tarefas-shell-";
-const CACHE_NAME = CACHE_PREFIX + "v5";
+const CACHE_NAME = CACHE_PREFIX + "v8";
 
 const SHELL = [
   "./",
@@ -25,27 +25,25 @@ self.addEventListener("install", event => {
 
         await Promise.all(
           OPTIONAL_ICONS.map(path =>
-            cache.add(path).catch(() => {
-              // Ícones ausentes não impedem o uso offline.
-            })
+            cache.add(path).catch(() => {})
           )
         );
       })
-      .then(() => self.skipWaiting())
   );
+
+  // A nova versão aguarda o fechamento das telas antigas,
+  // evitando trocar os arquivos no meio de uma sessão.
 });
 
 self.addEventListener("activate", event => {
   event.waitUntil(
     caches.keys()
       .then(keys => Promise.all(
-        keys
-          .filter(key =>
-            (key.startsWith(CACHE_PREFIX) ||
-              key === "organismo-de-tarefas-v1") &&
-            key !== CACHE_NAME
-          )
-          .map(key => caches.delete(key))
+        keys.filter(key =>
+          (key.startsWith(CACHE_PREFIX) ||
+            key === "organismo-de-tarefas-v6") &&
+          key !== CACHE_NAME
+        ).map(key => caches.delete(key))
       ))
       .then(() => self.clients.claim())
   );
@@ -53,32 +51,28 @@ self.addEventListener("activate", event => {
 
 self.addEventListener("fetch", event => {
   const request = event.request;
-
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
   const scope = new URL(self.registration.scope);
 
   if (url.origin !== scope.origin ||
-      !url.pathname.startsWith(scope.pathname)) {
-    return;
-  }
+      !url.pathname.startsWith(scope.pathname)) return;
 
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request).catch(async () =>
-        await caches.match(request) ||
         await caches.match(
-          new URL("./index.html", scope)
+          new URL("./index.html", scope).href
+        ) || await caches.match(
+          new URL("./", scope).href
         )
       )
     );
-
     return;
   }
 
   event.respondWith(
-    caches.match(request)
-      .then(cached => cached || fetch(request))
+    caches.match(request).then(cached => cached || fetch(request))
   );
 });

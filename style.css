@@ -1,17 +1,14 @@
 :root {
-  --bg-void: #05060a;
-  --bg-deep: #0b0e17;
+  color-scheme: dark;
+  --bg: #05060a;
   --panel: #0f1320;
-  --panel-2: #141a2b;
-  --line: rgba(255, 255, 255, 0.07);
+  --panel-2: #171e30;
   --text: #e7e9f2;
-  --text-dim: #8891a8;
-  --text-faint: #68728b;
+  --dim: #a1abc0;
+  --line: rgba(255, 255, 255, .1);
   --cyan: #4ee2c0;
-  --cyan-dim: #2a8f79;
   --amber: #e0a458;
-  --danger: #e2664e;
-  --shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  --danger: #ff7568;
 }
 
 * {
@@ -27,13 +24,7 @@ body {
 }
 
 body {
-  background:
-    radial-gradient(
-      ellipse 1200px 800px at 20% -10%,
-      rgba(78, 226, 192, 0.06),
-      transparent 60%
-    ),
-    var(--bg-void);
+  background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, Helvetica, Arial, sans-serif;
@@ -48,46 +39,71 @@ textarea {
 }
 
 button {
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
   cursor: pointer;
+  font-size: 12px;
 }
 
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
+button:hover {
+  border-color: var(--cyan);
+}
+
+button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: rgba(78, 226, 192, .15);
+  border-color: rgba(78, 226, 192, .4);
+  color: #d9fff5;
+}
+
+button.danger {
+  color: var(--danger);
+}
+
+button.active,
+button[aria-pressed="true"] {
+  color: var(--cyan);
+  border-color: var(--cyan);
+}
+
+:focus-visible {
   outline: 2px solid var(--cyan);
-  outline-offset: 2px;
+  outline-offset: 3px;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 h1,
 h2,
 h3 {
-  font-family: Georgia, "Iowan Old Style", Palatino, serif;
+  font-family: Georgia, "Iowan Old Style", serif;
   font-weight: 400;
 }
 
 #app {
-  width: 100%;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   height: 100vh;
   height: 100dvh;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  overflow: hidden;
 }
 
 header {
-  position: relative;
-  z-index: 20;
   display: flex;
   align-items: center;
-  gap: 9px;
   flex-wrap: wrap;
-  padding: 9px 12px;
-  background: linear-gradient(
-    180deg,
-    rgba(20, 26, 43, 0.95),
-    rgba(15, 19, 32, 0.88)
-  );
+  gap: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, #171e30, #0f1320);
   border-bottom: 1px solid var(--line);
 }
 
@@ -96,121 +112,71 @@ header {
   align-items: center;
   gap: 9px;
   margin-right: auto;
-  min-width: 0;
-}
-
-.brand .dot {
-  width: 9px;
-  height: 9px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--cyan);
-  box-shadow: 0 0 10px rgba(78, 226, 192, 0.7);
 }
 
 .brand h1 {
   margin: 0;
-  font-size: 17px;
-  white-space: nowrap;
+  font-size: 18px;
 }
 
-.lifeControls,
-.viewToggle {
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 12px var(--cyan);
+}
+
+.viewToggle,
+.ioGroup,
+.lifeControls {
   display: flex;
   align-items: center;
-  flex: none;
-  gap: 3px;
-  padding: 3px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-}
-
-.lifeControls button {
-  width: 29px;
-  height: 29px;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: var(--panel-2);
-  color: var(--text);
-}
-
-.lifeControls button.running {
-  color: var(--cyan);
-}
-
-.lifeControls button.paused {
-  color: var(--amber);
-}
-
-.speedLabel {
-  min-width: 32px;
-  color: var(--text-dim);
-  font-size: 11px;
-  text-align: center;
-}
-
-.viewToggle button {
-  padding: 7px 11px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 12px;
-}
-
-.viewToggle button.active {
-  background: rgba(78, 226, 192, 0.14);
-  color: var(--cyan);
-}
-
-.ioGroup {
-  display: flex;
   gap: 5px;
-  flex: none;
 }
 
-.btn {
-  padding: 8px 11px;
-  border: 1px solid rgba(78, 226, 192, 0.35);
-  border-radius: 9px;
-  background: rgba(78, 226, 192, 0.15);
-  color: #d9fff5;
+.filters {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 9px 12px;
+  background: #0b0e17;
+  border-bottom: 1px solid var(--line);
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--dim);
   font-size: 12px;
 }
 
-.btn:hover {
-  border-color: var(--cyan);
-}
-
-.btn.ghost {
+input,
+select,
+textarea {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
   background: var(--panel);
-  color: var(--text-dim);
-  border-color: var(--line);
-}
-
-.btn.ghost:hover {
   color: var(--text);
+  font-size: 13px;
 }
 
-.btn.danger:hover {
-  color: var(--danger);
-  border-color: var(--danger);
+.filters input {
+  width: 190px;
 }
 
-.newTaskBtn {
-  width: 35px;
-  height: 35px;
-  padding: 0;
-  flex: none;
-  font-size: 23px;
-  line-height: 1;
+#filterCount {
+  padding: 9px 0;
+  color: var(--dim);
+  font-size: 12px;
 }
 
 main {
   position: relative;
-  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
@@ -222,229 +188,171 @@ main {
   display: none;
 }
 
-#listView.active,
-#organismWrap.active {
+#listView.active {
   display: block;
 }
 
 #listView {
   overflow: auto;
-  padding: 18px 18px 75px;
+  padding: 16px 16px 80px;
 }
 
-.treeRoot {
-  max-width: 820px;
+.viewHelp,
+#treeRoot {
+  max-width: 960px;
   margin: 0 auto;
 }
 
-.emptyState {
-  margin-top: 70px;
-  color: var(--text-faint);
-  text-align: center;
-  font-size: 14px;
+.viewHelp {
+  margin-bottom: 16px;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
-ul.tree {
-  margin: 0;
-  padding-left: 23px;
+.tree {
   list-style: none;
+  padding-left: 20px;
+  margin: 0;
 }
 
-ul.tree.top {
+.tree.top {
   padding-left: 0;
 }
 
-li.node-row {
-  position: relative;
+.node-row {
   margin: 9px 0;
-}
-
-li.node-row::before {
-  position: absolute;
-  top: 22px;
-  left: -14px;
-  width: 10px;
-  height: 1px;
-  background: var(--line);
-  content: "";
-}
-
-ul.tree.top > li.node-row::before {
-  display: none;
 }
 
 .card {
   display: flex;
   align-items: flex-start;
+  flex-wrap: wrap;
   gap: 10px;
-  padding: 11px;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: linear-gradient(160deg, var(--panel-2), var(--panel));
+  background: linear-gradient(150deg, var(--panel-2), var(--panel));
+}
+
+.card.context {
+  border-style: dashed;
+  opacity: .8;
+}
+
+.card.completed {
+  border-color: rgba(224, 164, 88, .3);
+}
+
+.card.alert {
+  border-color: rgba(255, 117, 104, .6);
 }
 
 .weightPip {
   display: grid;
-  width: 29px;
-  height: 29px;
-  flex: none;
   place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
   border-radius: 50%;
   background: var(--cyan);
-  color: #031310;
-  font-size: 11px;
+  color: #041511;
   font-weight: 700;
+  font-size: 11px;
 }
 
-.card .body {
-  min-width: 0;
+.cardBody {
   flex: 1;
+  min-width: 180px;
 }
 
 .cardHeading {
   display: flex;
-  align-items: baseline;
-  gap: 7px;
   flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
 }
 
-.card .kw {
+.keyword {
   overflow-wrap: anywhere;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .typeTag {
   color: var(--cyan);
-  font-size: 10px;
+  font-size: 11px;
 }
 
-.card .desc {
-  margin-top: 3px;
-  overflow-wrap: anywhere;
-  color: var(--text-dim);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.card .meta {
+.description {
   margin-top: 5px;
-  color: var(--text-faint);
-  font-size: 10px;
+  color: var(--dim);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.card.duplicate {
-  color: var(--text-faint);
-  font-size: 12px;
+.meta {
+  margin-top: 6px;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.alertText {
+  color: var(--danger);
+}
+
+.contextText {
+  color: var(--amber);
 }
 
 .actions {
   display: flex;
-  gap: 4px;
-  flex: none;
+  flex-wrap: wrap;
+  gap: 5px;
+  width: 100%;
+  padding-left: 38px;
 }
 
-.iconBtn {
-  display: grid;
-  width: 27px;
-  height: 27px;
-  padding: 0;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--panel);
-  color: var(--text-dim);
-}
-
-.iconBtn:hover {
-  color: var(--cyan);
-  border-color: var(--cyan-dim);
-}
-
-.iconBtn.del:hover {
-  color: var(--danger);
-  border-color: var(--danger);
-}
-
-.iconBtn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-#historyToggle {
-  position: absolute;
-  right: 14px;
-  bottom: 14px;
-  z-index: 15;
-}
-
-#historyPanel {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 25;
-  display: flex;
-  width: min(320px, 85vw);
-  flex-direction: column;
-  transform: translateX(100%);
-  transition: transform 0.25s ease;
-  border-left: 1px solid var(--line);
-  background: var(--panel-2);
-  box-shadow: -20px 0 40px rgba(0, 0, 0, 0.4);
-}
-
-#historyPanel.open {
-  transform: translateX(0);
-}
-
-.hHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 17px;
-  border-bottom: 1px solid var(--line);
-}
-
-.hHead h3 {
-  margin: 0;
-  font-size: 16px;
-}
-
-.hHead button {
-  border: 0;
-  background: none;
-  color: var(--text-dim);
-  font-size: 18px;
-}
-
-#historyList {
-  flex: 1;
-  overflow: auto;
-  padding: 10px 16px;
-}
-
-.histItem {
-  padding: 10px 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.histItem .kw {
-  color: var(--amber);
+.duplicate,
+.emptyState {
+  padding: 16px;
+  color: var(--dim);
   font-size: 13px;
 }
 
-.histItem .when,
-.histEmpty {
-  color: var(--text-faint);
-  font-size: 11px;
+#organismWrap.active {
+  display: flex;
+  flex-direction: column;
 }
 
-.histEmpty {
-  padding: 20px 0;
-  text-align: center;
+.organismToolbar,
+#organizeTools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
 }
 
-#organismWrap {
+#organizeTools {
+  background: #17202b;
+  max-height: 170px;
+  overflow: auto;
+}
+
+#selectedCount,
+#speedLabel {
+  color: var(--dim);
+  font-size: 12px;
+}
+
+#canvasArea {
+  position: relative;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -452,8 +360,9 @@ ul.tree.top > li.node-row::before {
   display: block;
   width: 100%;
   height: 100%;
-  cursor: grab;
   touch-action: none;
+  cursor: grab;
+  user-select: none;
 }
 
 #organism.panning {
@@ -462,181 +371,236 @@ ul.tree.top > li.node-row::before {
 
 .connLine {
   fill: none;
-  stroke-linecap: round;
+  stroke: #58b9b1;
+  stroke-width: 1.8;
+  stroke-opacity: .4;
+  pointer-events: none;
 }
 
 .node {
-  cursor: pointer;
+  cursor: grab;
 }
 
 .node.sediment {
   cursor: default;
 }
 
+.cellBody {
+  filter: drop-shadow(0 0 5px var(--cell-color));
+}
+
+.membrane {
+  stroke: rgba(235, 255, 250, .75);
+  stroke-width: 1.6;
+}
+
+.node.selected .selectionRing {
+  opacity: 1;
+}
+
+.selectionRing {
+  fill: none;
+  stroke: white;
+  stroke-width: 2.4;
+  stroke-dasharray: 5 4;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.node.alert .cellBody {
+  animation: cell-alert 1.8s ease-in-out infinite;
+}
+
 .nodeLabel {
   fill: #eef2fb;
-  font-family: -apple-system, "Segoe UI", sans-serif;
+  font-size: 12px;
+  text-anchor: middle;
   pointer-events: none;
-  user-select: none;
+  paint-order: stroke;
+  stroke: #05060a;
+  stroke-width: 3px;
 }
 
-.node.selected .membrane {
-  stroke: #fff !important;
-  stroke-width: 4px !important;
-  filter: drop-shadow(0 0 10px #4ee2c0);
+.nodeAge {
+  fill: #b6c1d5;
+  font-size: 10px;
+  text-anchor: middle;
+  pointer-events: none;
 }
 
-.node.sediment .nodeLabel {
-  fill: #fff0dc;
+.sediment .nodeLabel {
+  fill: #ffe6bb;
+  font-size: 10px;
+}
+
+@keyframes cell-alert {
+  0%, 100% { transform: scale(1); opacity: .85; }
+  50% { transform: scale(1.045); opacity: 1; }
+}
+
+#hintBar {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  transform: translateX(-50%);
+  padding: 7px 11px;
+  border-radius: 9px;
+  background: rgba(15, 19, 32, .9);
+  color: var(--dim);
+  font-size: 11px;
+  text-align: center;
+  pointer-events: none;
 }
 
 .zoomCtl {
   position: absolute;
-  bottom: 14px;
-  left: 14px;
-  z-index: 15;
+  left: 12px;
+  bottom: 44px;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
+  gap: 3px;
 }
 
 .zoomCtl button {
-  width: 35px;
-  height: 35px;
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 16px;
+  width: 36px;
 }
 
-.zoomCtl button:last-child {
-  border-bottom: 0;
-}
-
-.zoomCtl button:hover {
-  color: var(--cyan);
-}
-
-.hintBar {
+.visualLegend {
   position: absolute;
-  top: 12px;
-  left: 50%;
-  z-index: 15;
-  max-width: min(480px, calc(100% - 30px));
-  padding: 7px 12px;
-  transform: translateX(-50%);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: rgba(15, 19, 32, 0.92);
-  color: var(--text);
-  font-size: 11px;
-  opacity: 0;
+  left: 12px;
+  right: 100px;
+  bottom: 10px;
+  color: #a1abc0;
+  font-size: 10px;
   pointer-events: none;
-  text-align: center;
 }
 
-.hintBar.show {
-  opacity: 1;
+#historyToggle {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 5;
 }
 
-#overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  padding: 12px;
-  background: rgba(4, 5, 9, 0.75);
-}
-
-#overlay.open {
+#historyPanel {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 10;
   display: flex;
+  flex-direction: column;
+  width: min(360px, 90vw);
+  background: var(--panel-2);
+  border-left: 1px solid var(--line);
+  transform: translateX(100%);
+  transition: transform .2s ease;
 }
 
-#modal {
-  width: min(420px, 100%);
-  max-height: calc(100dvh - 24px);
-  overflow: auto;
-  padding: 19px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: linear-gradient(165deg, var(--panel-2), var(--bg-deep));
-  box-shadow: var(--shadow);
+#historyPanel.open {
+  transform: translateX(0);
 }
 
-#modal h2 {
+.hHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.hHead h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: 18px;
 }
 
-#modal .hint {
-  margin: 5px 0 15px;
-  color: var(--text-dim);
+#historyList {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+}
+
+.histItem {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.histItem strong {
+  color: var(--amber);
+  overflow-wrap: anywhere;
+}
+
+.histItem p {
+  color: var(--dim);
   font-size: 12px;
 }
 
-.field {
+dialog {
+  width: min(460px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, .78);
+}
+
+dialog h2 {
+  margin-top: 0;
+}
+
+dialog label {
   margin-bottom: 13px;
 }
 
-.field[hidden] {
-  display: none;
-}
-
-.field label {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--text-dim);
-  font-size: 12px;
-}
-
-.field input,
-.field textarea,
-.field select {
+dialog input,
+dialog textarea,
+dialog select {
   width: 100%;
-  min-width: 0;
-  padding: 10px;
+}
+
+.fieldHelp {
+  margin-top: -6px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+fieldset {
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--panel);
-  color: var(--text);
-  font-size: 13px;
+  margin: 12px 0;
 }
 
-.field textarea {
-  min-height: 64px;
-  resize: vertical;
-}
-
-.keywordRow {
-  display: flex;
-  align-items: stretch;
-  gap: 7px;
-}
-
-.keywordRow input {
-  flex: 1;
-}
-
-.keywordRow .btn {
-  flex: none;
+legend {
+  color: var(--dim);
+  font-size: 12px;
 }
 
 .modalActions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.dependencyRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
 }
 
 #toasts {
   position: fixed;
   top: 12px;
   right: 12px;
-  z-index: 60;
+  z-index: 100;
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -644,36 +608,28 @@ ul.tree.top > li.node-row::before {
 }
 
 .toast {
-  max-width: min(300px, calc(100vw - 24px));
-  padding: 9px 12px;
-  transform: translateX(15px);
+  max-width: min(380px, calc(100vw - 24px));
+  padding: 12px;
   border: 1px solid var(--line);
   border-left: 3px solid var(--cyan);
   border-radius: 9px;
   background: var(--panel-2);
-  box-shadow: var(--shadow);
-  font-size: 12px;
-  opacity: 0;
-  transition: opacity 0.2s, transform 0.2s;
-}
-
-.toast.show {
-  transform: translateX(0);
-  opacity: 1;
-}
-
-.toast.err {
-  border-left-color: var(--danger);
+  box-shadow: 0 10px 30px #0008;
+  font-size: 13px;
 }
 
 .toast.warn {
   border-left-color: var(--amber);
 }
 
-@media (max-width: 760px) {
+.toast.error {
+  border-left-color: var(--danger);
+}
+
+@media (max-width: 700px) {
   header {
     gap: 6px;
-    padding: 7px 9px;
+    padding: 8px;
   }
 
   .brand {
@@ -681,70 +637,56 @@ ul.tree.top > li.node-row::before {
   }
 
   .brand h1 {
-    font-size: 15px;
+    font-size: 16px;
   }
 
-  .ioGroup {
-    margin-left: auto;
-  }
-
-  .ioGroup .btn {
+  .filters {
+    gap: 6px;
     padding: 7px;
-    font-size: 11px;
-  }
-}
-
-@media (max-width: 480px) {
-  .brand {
-    width: auto;
-    flex: 1 0 100%;
   }
 
-  .viewToggle button {
-    padding: 6px 8px;
-    font-size: 11px;
+  .filters label {
+    flex: 1 1 130px;
   }
 
-  .lifeControls button {
-    width: 26px;
-    height: 26px;
+  .filters input,
+  .filters select {
+    width: 100%;
   }
 
-  .speedLabel {
-    min-width: 28px;
-  }
-
-  .ioGroup {
-    order: 2;
-    width: auto;
-    margin-left: 0;
-  }
-
-  .newTaskBtn {
-    order: 2;
-    margin-left: auto;
+  .filters label:first-child {
+    flex-basis: 100%;
   }
 
   #listView {
-    padding: 12px 9px 68px;
+    padding: 12px 8px 75px;
   }
 
-  ul.tree {
-    padding-left: 15px;
+  .tree {
+    padding-left: 12px;
   }
 
   .card {
+    padding: 10px;
     gap: 7px;
-    padding: 9px;
-    flex-wrap: wrap;
   }
 
-  .card .body {
-    flex-basis: calc(100% - 37px);
+  .cardBody {
+    min-width: 120px;
   }
 
   .actions {
-    margin-left: 36px;
+    padding-left: 0;
+  }
+
+  .organismToolbar,
+  #organizeTools {
+    padding: 6px;
+    gap: 5px;
+  }
+
+  button {
+    min-height: 38px;
   }
 }
 
@@ -752,7 +694,657 @@ ul.tree.top > li.node-row::before {
   *,
   *::before,
   *::after {
-    scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+
+/* ORGANISMO_COMPACTO_V1 */
+
+/* Acessibilidade: rótulos continuam disponíveis aos leitores de tela. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Faixa única de filtros e organização. */
+.controlStrip {
+  position: relative;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  padding: 5px 10px;
+  background: #0b0e17;
+  border-bottom: 1px solid var(--line);
+}
+
+.controlStrip .filters {
+  flex: 1 1 310px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.controlStrip .compactSearch {
+  flex: 1 1 150px;
+  min-width: 70px;
+  max-width: 240px;
+  margin: 0;
+}
+
+.controlStrip .compactSearch input {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+}
+
+.controlStrip #filterCount {
+  padding: 0;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.controlStrip .organismToolbar {
+  flex: 0 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.controlStrip button,
+.controlStrip summary {
+  min-height: 32px;
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
+.controlStrip .lifeControls {
+  gap: 3px;
+}
+
+.controlStrip #speedLabel {
+  min-width: 29px;
+  text-align: center;
+  font-size: 10px;
+}
+
+/* Menus flutuantes: não reduzem a altura disponível para tarefas. */
+.compactFilterMenu,
+.compactOrganizeMenu {
+  flex: none;
+}
+
+.compactFilterMenu > summary,
+.compactOrganizeMenu > summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.compactFilterMenu > summary::-webkit-details-marker,
+.compactOrganizeMenu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.compactFilterMenu[open] > summary,
+.compactOrganizeMenu[open] > summary {
+  color: var(--cyan);
+  border-color: var(--cyan);
+}
+
+.compactFilterMenu[open] > .filterOptions,
+.compactOrganizeMenu[open] > #organizeTools {
+  position: absolute;
+  top: calc(100% + 4px);
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  max-height: min(360px, 60dvh);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #111827;
+  box-shadow: 0 14px 36px #0009;
+}
+
+.compactFilterMenu[open] > .filterOptions {
+  left: 8px;
+  width: min(590px, calc(100vw - 24px));
+}
+
+.compactOrganizeMenu[open] > #organizeTools {
+  right: 8px;
+  width: min(590px, calc(100vw - 24px));
+}
+
+.filterOptions label {
+  flex: 1 1 140px;
+  min-width: 0;
+  margin: 0;
+}
+
+.filterOptions select {
+  width: 100%;
+}
+
+#organizeTools label {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0;
+}
+
+#organizeTools #alignChoice {
+  max-width: 190px;
+}
+
+/* Lista: cada tarefa tem uma única linha, sem blocos de metadados. */
+#listView {
+  padding: 10px 12px 65px;
+}
+
+.viewHelp,
+#treeRoot {
+  max-width: 1200px;
+}
+
+.viewHelp {
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+
+.node-row {
+  margin: 4px 0;
+}
+
+.tree {
+  padding-left: 14px;
+}
+
+.card.compactCard {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 7px;
+  min-height: 38px;
+  padding: 3px 6px;
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+#treeRoot > .compactCard {
+  margin: 4px 0;
+}
+
+.compactCard .weightPip {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+}
+
+.compactType {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--cyan);
+}
+
+.taskTypeIcon {
+  display: block;
+}
+
+.taskTitleButton {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 30px;
+  padding: 3px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.taskTitleButton:hover {
+  color: var(--cyan);
+  text-decoration: underline;
+}
+
+.taskStatus {
+  flex: none;
+  width: 16px;
+  font-size: 11px;
+  text-align: center;
+  color: var(--dim);
+}
+
+.readyStatus {
+  color: #43ff72;
+  text-shadow: 0 0 7px #43ff7280;
+}
+
+.compactCard .compactActions {
+  display: flex;
+  flex: none;
+  flex-wrap: nowrap;
+  gap: 4px;
+  width: auto;
+  padding: 0;
+}
+
+.compactActions button {
+  width: 30px;
+  min-height: 30px;
+  padding: 2px;
+  font-size: 16px;
+}
+
+.compactCard.ready .completeTaskButton {
+  color: #43ff72;
+}
+
+.compactCard.completed .taskTitleButton {
+  color: #e0b984;
+}
+
+.duplicate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 5px 7px;
+  font-size: 11px;
+}
+
+/* Ações secundárias continuam disponíveis sem ocupar a linha da tarefa. */
+.taskActionOptions {
+  display: grid;
+  gap: 8px;
+}
+
+.taskActionOptions button {
+  min-height: 40px;
+  text-align: left;
+}
+
+.availability {
+  margin: -5px 0 14px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.readyText {
+  color: #43ff72;
+}
+
+.completedDetails p {
+  color: var(--dim);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.completedDetails .description {
+  white-space: pre-wrap;
+}
+
+/* Disponibilidade é independente da idade, forma e movimento da célula. */
+.readyNucleus {
+  filter: drop-shadow(0 0 4px #43ff72);
+}
+
+.readyHalo {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ready-halo 1.65s ease-in-out infinite;
+  filter: drop-shadow(0 0 3px #43ff72);
+}
+
+@keyframes ready-halo {
+  0%, 100% {
+    transform: scale(1);
+    opacity: .65;
+  }
+  50% {
+    transform: scale(1.16);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 700px) {
+  .controlStrip {
+    padding: 5px 7px;
+    gap: 5px;
+  }
+
+  .controlStrip .filters label.compactSearch {
+    flex: 1 1 90px;
+    max-width: none;
+  }
+
+  .controlStrip .filterOptions label {
+    flex: 1 1 130px;
+  }
+
+  .controlStrip .organismToolbar {
+    gap: 4px;
+  }
+
+  #listView {
+    padding: 8px 6px 65px;
+  }
+
+  .tree {
+    padding-left: 10px;
+  }
+
+  .card.compactCard {
+    gap: 4px;
+    padding: 3px 4px;
+  }
+
+  .compactCard .weightPip {
+    width: 20px;
+    height: 20px;
+  }
+
+  .taskTitleButton {
+    font-size: 12px;
+  }
+
+  .compactActions button {
+    width: 30px;
+    min-height: 32px;
+  }
+
+  .visualLegend {
+    font-size: 9px;
+    line-height: 1.4;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .readyHalo {
+    animation: none !important;
+    transform: none;
+    opacity: .85;
+  }
+}
+
+
+/* ORGANISMO_COMPACTO_V2 */
+
+/* Colunas fixas para os ícones; somente o nome ocupa o espaço restante. */
+#treeRoot .card.compactCard {
+  display: grid;
+  grid-template-columns: 22px 18px minmax(0, 1fr) 16px auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 3px 6px;
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+#treeRoot .compactCard > .weightPip {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+}
+
+#treeRoot .compactCard > .compactType {
+  width: 18px;
+  height: 18px;
+}
+
+#treeRoot .compactCard > .taskTitleButton {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  margin: 0;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#treeRoot .compactCard > .taskStatus {
+  width: 16px;
+  margin: 0;
+  text-align: center;
+}
+
+#treeRoot .compactCard > .actions.compactActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  justify-self: end;
+  gap: 4px;
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+
+#treeRoot .compactCard .compactActions > button {
+  flex: 0 0 30px;
+  width: 30px;
+  min-height: 30px;
+  margin: 0;
+  padding: 2px;
+}
+
+/* Busca e filtros imediatamente depois da marca, nas duas visualizações. */
+#app > header.compactHeaderV2 {
+  position: relative;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 7px 12px;
+}
+
+.compactHeaderV2 > .brand {
+  flex: 0 0 auto;
+  width: auto;
+  margin-right: 0;
+  white-space: nowrap;
+}
+
+.compactHeaderV2 .brand h1 {
+  font-size: 17px;
+}
+
+#app > .compactHeaderV2 > .filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  flex: 1 1 260px;
+  min-width: 0;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.compactHeaderV2 > .filters > label.compactSearch {
+  flex: 1 1 150px;
+  min-width: 80px;
+  max-width: 230px;
+  margin: 0;
+}
+
+.compactHeaderV2 .compactSearch input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 8px;
+}
+
+.compactHeaderV2 #filterCount {
+  padding: 0;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.compactHeaderV2 > .viewToggle,
+.compactHeaderV2 > .ioGroup,
+.compactHeaderV2 > #newTaskBtn {
+  flex: 0 0 auto;
+}
+
+.compactHeaderV2 button,
+.compactHeaderV2 .compactFilterMenu > summary {
+  min-height: 32px;
+  padding: 5px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.compactHeaderV2 .compactFilterMenu[open] > .filterOptions {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 8px;
+  z-index: 40;
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: min(590px, calc(100vw - 24px));
+  max-height: min(360px, 60dvh);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #111827;
+  box-shadow: 0 14px 36px #0009;
+}
+
+.compactHeaderV2 .filterOptions > label {
+  flex: 1 1 140px;
+  min-width: 0;
+  margin: 0;
+}
+
+.compactHeaderV2 .filterOptions select {
+  width: 100%;
+}
+
+/* A faixa inferior existe somente no Organismo, para seus controles. */
+#compactControlStrip {
+  justify-content: flex-end;
+}
+
+#compactControlStrip > .organismToolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  flex: 1 1 auto;
+}
+
+/* O grid conserva header + controles (ocultos na Lista) + área principal. */
+#app {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+@media (max-width: 1200px) {
+  .compactHeaderV2 #filterCount {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  #app > .compactHeaderV2 > .filters {
+    flex-basis: 200px;
+  }
+}
+
+@media (max-width: 700px) {
+  #app > header.compactHeaderV2 {
+    gap: 6px;
+    padding: 6px 8px;
+  }
+
+  .compactHeaderV2 .brand {
+    gap: 5px;
+  }
+
+  .compactHeaderV2 .brand h1 {
+    font-size: 14px;
+  }
+
+  #app > .compactHeaderV2 > .filters {
+    flex: 1 1 160px;
+    gap: 4px;
+  }
+
+  .compactHeaderV2 > .filters > label.compactSearch {
+    flex: 1 1 90px;
+    min-width: 65px;
+    max-width: none;
+  }
+
+  .compactHeaderV2 .compactSearch input {
+    font-size: 12px;
+  }
+
+  #treeRoot .card.compactCard {
+    grid-template-columns: 20px 18px minmax(0, 1fr) 16px auto;
+    gap: 4px;
+    padding: 3px 4px;
+  }
+
+  #treeRoot .compactCard > .weightPip {
+    width: 20px;
+    height: 20px;
+  }
+
+  #treeRoot .compactCard .compactActions > button {
+    min-height: 32px;
   }
 }

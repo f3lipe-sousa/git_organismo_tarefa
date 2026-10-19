@@ -2,7 +2,7 @@
   "id": "./",
   "name": "Organismo de Tarefas",
   "short_name": "Organismo",
-  "description": "Organize tarefas, dependências e histórico de conclusões.",
+  "description": "Organize tarefas, dependências, urgência e envelhecimento visual.",
   "lang": "pt-BR",
   "start_url": "./",
   "scope": "./",
@@ -22,12 +22,6 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
-    },
-    {
-      "src": "./icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "maskable"
     }
   ]
 }

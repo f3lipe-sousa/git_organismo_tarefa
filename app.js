@@ -1,464 +1,652 @@
+/* ORGANISMO_COMPACTO_V2 */
+/* ORGANISMO_COMPACTO_V1 */
 (function () {
   "use strict";
 
   const {
-    Store,
-    WORLD,
-    CENTER,
-    TYPES,
-    getBounds,
-    setWorldBounds
+    Store, TYPES, URGENCIES, WORLD, CENTER,
+    today, validDate, appearance, setWorldBounds
   } = window.TaskCore;
 
-  const SVG_NS = "http://www.w3.org/2000/svg";
   const $ = id => document.getElementById(id);
-
-  const listView = $("listView");
-  const orgWrap = $("organismWrap");
+  const NS = "http://www.w3.org/2000/svg";
   const svg = $("organism");
   const camera = $("camera");
-  const overlay = $("overlay");
-  const historyPanel = $("historyPanel");
 
   let currentView = "list";
   let modalState = null;
-  let pendingConnectId = null;
-  let drag = null;
-  let pan = null;
-  let lastTap = null;
-  let lastInteraction = Date.now();
-  let paused = false;
+  let dependencyId = null;
+  let organizing = false;
+  let paused = matchMedia("(prefers-reduced-motion: reduce)").matches;
   let speed = 1;
-  let engineRunning = false;
-  let rafId = null;
-  let autosaveTimer = null;
+  let gesture = null;
+  let lastInteraction = Date.now();
+  let lastFrame = performance.now();
+  let lastPaint = 0;
+  let lastAgeRefresh = Date.now();
+  let storageWarningShown = false;
 
+  const selected = new Set();
   const runtime = new Map();
+  const nodes = new Map();
+  const lines = [];
   const cam = { x: CENTER.x, y: CENTER.y, scale: 1 };
 
+  function element(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function svgElement(tag, attributes = {}) {
+    const node = document.createElementNS(NS, tag);
+    Object.entries(attributes).forEach(([key, value]) =>
+      node.setAttribute(key, value));
+    return node;
+  }
+
   function toast(message, type = "") {
-    const element = document.createElement("div");
-    element.className = "toast" + (type ? " " + type : "");
-    element.textContent = message;
-    $("toasts").appendChild(element);
-
-    requestAnimationFrame(() => element.classList.add("show"));
-
-    setTimeout(() => {
-      element.classList.remove("show");
-      setTimeout(() => element.remove(), 300);
-    }, 3200);
+    const node = element("div", "toast " + type, message);
+    $("toasts").appendChild(node);
+    setTimeout(() => node.remove(), 5000);
   }
 
-  function escapeHtml(value) {
-    return String(value).replace(/[&<>"']/g, character => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;"
-    })[character]);
-  }
-
-  function showHint(message) {
-    $("hintBar").textContent = message;
-    $("hintBar").classList.toggle("show", !!message);
-  }
-
-  function clearConnection() {
-    pendingConnectId = null;
-    showHint("");
-  }
-
-  function switchView(view) {
-    if (view === currentView) return;
-
-    currentView = view;
-    listView.classList.toggle("active", view === "list");
-    orgWrap.classList.toggle("active", view === "organism");
-    $("toListBtn").classList.toggle("active", view === "list");
-    $("toOrgBtn").classList.toggle("active", view === "organism");
-
-    if (view === "organism") {
-      requestAnimationFrame(() => {
-        if (currentView !== "organism") return;
-
-        resizeViewport();
-        renderOrganism();
-        startEngine();
-      });
-    } else {
-      stopEngine();
-      clearConnection();
-      renderList();
+  function checkStorage() {
+    if (Store.hasStorageError() && !storageWarningShown) {
+      storageWarningShown = true;
+      toast(
+        "Não foi possível salvar no navegador. Exporte um backup para proteger suas tarefas.",
+        "warn"
+      );
     }
   }
 
-  $("toListBtn").addEventListener("click", () => switchView("list"));
-  $("toOrgBtn").addEventListener("click", () => switchView("organism"));
+  function persist() {
+    Store.save();
+    checkStorage();
+  }
+
+  function formatDate(value) {
+    if (!validDate(value)) return "Data indisponível";
+    const [year, month, day] = value.split("-");
+    return `${day}/${month}/${year}`;
+  }
+
+  function formatTimestamp(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? "Data indisponível"
+      : date.toLocaleString("pt-BR", {
+          dateStyle: "short",
+          timeStyle: "short"
+        });
+  }
+
+  function matches(task) {
+    const search = $("filterSearch").value.trim()
+      .toLocaleLowerCase("pt-BR");
+    const type = $("filterType").value;
+    const urgency = $("filterUrgency").value;
+    const status = $("filterStatus").value;
+
+    if (search && !`${task.keyword} ${task.description}`
+        .toLocaleLowerCase("pt-BR").includes(search)) return false;
+
+    if (type && task.type !== type) return false;
+    if (urgency && task.urgency !== Number(urgency)) return false;
+    if (status === "active" && task.completed) return false;
+    if (status === "completed" && !task.completed) return false;
+    if (status === "alert" && !appearance(task).alert) return false;
+
+    return true;
+  }
+
+  function visibleTasks() {
+    return Store.all().filter(matches);
+  }
+
+  function visibleActive() {
+    return visibleTasks().filter(task => !task.completed);
+  }
+
+  function action(label, callback, disabled = false, title = "") {
+    const button = element("button", "", label);
+    button.type = "button";
+    button.disabled = disabled;
+    if (title) button.title = title;
+    button.addEventListener("click", callback);
+    return button;
+  }
+
+  function isReady(task) {
+    return !!task && !task.completed &&
+      Store.getParents(task.id).every(parent => parent.completed);
+  }
+
+  function availabilityLabel(task) {
+    if (task.completed) return "Concluída";
+    return isReady(task)
+      ? "Pronta para resolução"
+      : "Bloqueada por pré-requisito pendente";
+  }
+
+  function showTaskDetails(task) {
+    if (!task.completed) {
+      openTaskModal({ mode: "edit", id: task.id });
+      return;
+    }
+
+    const dialog = element("dialog", "taskDetailsDialog");
+    const heading = element("h2", "", task.keyword);
+    heading.id = "completedTaskDetailsTitle";
+    dialog.setAttribute("aria-labelledby", heading.id);
+
+    const details = element("div", "completedDetails");
+
+    details.append(
+      element("p", "", "Tipo: " + TYPES[task.type]),
+      element("p", "", "Situação: Concluída"),
+      element("p", "", "Início: " + formatDate(task.startDate)),
+      element("p", "", "Conclusão: " + formatTimestamp(task.completedAt)),
+      element("p", "", "Urgência: " + URGENCIES[task.urgency].label)
+    );
+
+    if (task.description) {
+      details.appendChild(element("p", "description", task.description));
+    }
+
+    const footer = element("div", "modalActions");
+    footer.appendChild(action("Fechar", () => dialog.close()));
+
+    dialog.append(heading, details, footer);
+    document.body.appendChild(dialog);
+    dialog.addEventListener("close", () => dialog.remove(), { once: true });
+    dialog.showModal();
+    footer.querySelector("button").focus();
+  }
+
+  function openTaskActions(id) {
+    const task = Store.get(id);
+    if (!task || task.completed) return;
+
+    const dialog = element("dialog", "taskActionsDialog");
+    const heading = element("h2", "", task.keyword);
+    heading.id = "taskActionsTitle";
+    dialog.setAttribute("aria-labelledby", heading.id);
+
+    const status = element("p",
+      isReady(task) ? "availability readyText" : "availability",
+      availabilityLabel(task)
+    );
+
+    const options = element("div", "taskActionOptions");
+
+    function option(label, callback) {
+      return action(label, () => {
+        dialog.close();
+        callback();
+      });
+    }
+
+    options.append(
+      option("Detalhes / editar", () =>
+        openTaskModal({ mode: "edit", id: task.id })),
+
+      option("+ Pré-requisito", () =>
+        openTaskModal({
+          mode: "create",
+          relation: "prerequisite",
+          targetId: task.id
+        })),
+
+      option("+ Dependente", () =>
+        openTaskModal({
+          mode: "create",
+          relation: "dependent",
+          targetId: task.id
+        })),
+
+      option("Gerenciar dependências", () => openDependencies(task.id)),
+
+      option("Excluir tarefa", () => {
+        if (!confirm(
+          'Excluir "' + task.keyword + '" e remover suas conexões?'
+        )) return;
+
+        Store.deleteTask(task.id);
+        selected.delete(task.id);
+        runtime.delete(task.id);
+        refresh();
+        toast("Tarefa excluída.");
+      })
+    );
+
+    options.lastElementChild.classList.add("danger");
+
+    const footer = element("div", "modalActions");
+    footer.appendChild(action("Fechar", () => dialog.close()));
+
+    dialog.append(heading, status, options, footer);
+    document.body.appendChild(dialog);
+    dialog.addEventListener("close", () => dialog.remove(), { once: true });
+    dialog.showModal();
+    options.querySelector("button").focus();
+  }
+
+  function taskCard(task, context = false) {
+    const visual = appearance(task);
+    const ready = isReady(task);
+
+    const card = element(
+      "div",
+      "card compactCard" +
+        (context ? " context" : "") +
+        (task.completed ? " completed" : "") +
+        (visual.alert ? " alert" : "") +
+        (ready ? " ready" : "")
+    );
+
+    if (context) {
+      card.title =
+        "Exibida para contextualizar a dependência; não corresponde ao filtro.";
+    }
+
+    const weight = element("span", "weightPip",
+      String(Store.getWeight(task.id)));
+    weight.title = "Quantidade de pré-requisitos acumulados";
+    weight.setAttribute("aria-label",
+      Store.getWeight(task.id) + " pré-requisitos acumulados");
+
+    const typeIcon = svgElement("svg", {
+      class: "taskTypeIcon",
+      viewBox: "-9 -9 18 18",
+      width: 18,
+      height: 18,
+      "aria-hidden": "true",
+      focusable: "false"
+    });
+
+    const miniShape = shape(task.type, 6);
+    miniShape.setAttribute("fill", "none");
+    miniShape.setAttribute("stroke", "currentColor");
+    miniShape.setAttribute("stroke-width", "1.6");
+    typeIcon.appendChild(miniShape);
+
+    const typeBadge = element("span", "compactType");
+    typeBadge.title = TYPES[task.type];
+    typeBadge.setAttribute("aria-label", "Tipo: " + TYPES[task.type]);
+    typeBadge.appendChild(typeIcon);
+
+    const keyword = action(task.keyword, () => showTaskDetails(task));
+    keyword.className = "taskTitleButton";
+    keyword.title = task.keyword + " — " + TYPES[task.type] +
+      " — abrir detalhes";
+    keyword.setAttribute("aria-label",
+      task.keyword + " — abrir detalhes da tarefa");
+
+    const status = element("span",
+      "taskStatus" + (ready ? " readyStatus" : ""),
+      task.completed ? "✓" : ready ? "●" : "🔒");
+    status.title = availabilityLabel(task);
+    status.setAttribute("aria-label", availabilityLabel(task));
+
+    const actions = element("div", "actions compactActions");
+
+    if (!task.completed) {
+      const complete = action("✓", () => {
+        const result = Store.completeTask(task.id);
+
+        if (!result.ok) {
+          toast("Conclua os pré-requisitos primeiro.", "warn");
+          return;
+        }
+
+        selected.delete(task.id);
+        runtime.delete(task.id);
+        refresh();
+        toast("Tarefa concluída e depositada no sedimento.");
+      }, !ready, ready
+        ? "Concluir tarefa"
+        : "Conclua os pré-requisitos primeiro");
+
+      complete.className = "completeTaskButton";
+      complete.setAttribute("aria-label", "Concluir " + task.keyword);
+
+      const menu = action("⋯", () => openTaskActions(task.id));
+      menu.className = "taskMenuButton";
+      menu.title = "Editar, criar tarefas relacionadas e gerenciar dependências";
+      menu.setAttribute("aria-label", "Mais ações para " + task.keyword);
+      menu.setAttribute("aria-haspopup", "dialog");
+
+      actions.append(complete, menu);
+    } else {
+      const details = action("⋯", () => showTaskDetails(task));
+      details.title = "Detalhes da tarefa concluída";
+      details.setAttribute("aria-label", "Detalhes de " + task.keyword);
+      actions.appendChild(details);
+    }
+
+    card.append(weight, typeBadge, keyword, status, actions);
+    return card;
+  }
 
   function renderList() {
     const root = $("treeRoot");
     root.replaceChildren();
 
-    const roots = Store.getRootTasks();
+    const matched = visibleTasks();
+    const included = new Set();
 
-    if (!roots.length) {
-      root.innerHTML =
-        '<div class="emptyState">Nenhuma tarefa ativa. Toque em + para criar uma.</div>';
-      return;
-    }
+    matched.filter(task => !task.completed).forEach(task => {
+      const stack = [task.id];
 
-    const list = document.createElement("ul");
-    list.className = "tree top";
+      while (stack.length) {
+        const id = stack.pop();
+        if (included.has(id)) continue;
+        included.add(id);
+        stack.push(...(Store.get(id)?.parents || []));
+      }
+    });
 
+    const active = Store.getActiveTasks()
+      .filter(task => included.has(task.id));
+
+    const prerequisites = new Set(active.flatMap(task => task.parents));
+    const roots = active.filter(task => !prerequisites.has(task.id));
     const visited = new Set();
-    roots.forEach(task => list.appendChild(buildNode(task, visited)));
-    root.appendChild(list);
-  }
 
-  function buildNode(task, visited) {
-    const item = document.createElement("li");
-    item.className = "node-row";
+    function build(task) {
+      const item = element("li", "node-row");
 
-    if (visited.has(task.id)) {
-      item.innerHTML =
-        '<div class="card duplicate"><div class="body">↺ ' +
-        escapeHtml(task.keyword) +
-        " (já exibida acima)</div></div>";
+      if (visited.has(task.id)) {
+        item.appendChild(element("div", "duplicate",
+          `↺ ${task.keyword} — compartilhada, já exibida acima`));
+        return item;
+      }
+
+      visited.add(task.id);
+      item.appendChild(taskCard(task, !matches(task)));
+
+      const parents = Store.getParents(task.id)
+        .filter(parent => included.has(parent.id));
+
+      if (parents.length) {
+        const list = element("ul", "tree");
+        parents.forEach(parent => list.appendChild(build(parent)));
+        item.appendChild(list);
+      }
       return item;
     }
 
-    visited.add(task.id);
-
-    const parents = Store.getParents(task.id);
-    const card = document.createElement("div");
-    card.className = "card";
-
-    card.innerHTML = `
-      <span class="weightPip" title="Pré-requisitos acumulados">${Store.getWeight(task.id)}</span>
-      <div class="body">
-        <div class="cardHeading">
-          <span class="kw">${escapeHtml(task.keyword)}</span>
-          <span class="typeTag">${escapeHtml(TYPES[task.type] || TYPES.pessoal)}</span>
-        </div>
-        ${task.description
-          ? `<div class="desc">${escapeHtml(task.description)}</div>`
-          : ""}
-        <div class="meta">${parents.length} pré-requisito(s) direto(s)</div>
-      </div>
-      <div class="actions">
-        <button class="iconBtn complete" type="button" title="Concluir" aria-label="Concluir" data-act="complete">✓</button>
-        <button class="iconBtn" type="button" title="Editar" aria-label="Editar" data-act="edit">✎</button>
-        <button class="iconBtn" type="button" title="Adicionar pré-requisito" aria-label="Adicionar pré-requisito" data-act="add">＋</button>
-        <button class="iconBtn del" type="button" title="Excluir" aria-label="Excluir" data-act="delete">✕</button>
-      </div>
-    `;
-
-    const completeButton =
-      card.querySelector('[data-act="complete"]');
-
-    if (parents.some(parent => !parent.completed)) {
-      completeButton.disabled = true;
-      completeButton.title =
-        "Conclua os pré-requisitos primeiro";
+    if (roots.length) {
+      const list = element("ul", "tree top");
+      roots.forEach(task => list.appendChild(build(task)));
+      root.appendChild(list);
     }
 
-    completeButton.addEventListener(
-      "click",
-      () => doComplete(task.id)
-    );
+    matched.filter(task => task.completed)
+      .sort((a, b) => b.completedAt - a.completedAt)
+      .forEach(task => root.appendChild(taskCard(task)));
 
-    card.querySelector('[data-act="edit"]')
-      .addEventListener("click", () => {
-        openModal({ mode: "edit", taskId: task.id });
-      });
-
-    card.querySelector('[data-act="add"]')
-      .addEventListener("click", () => {
-        openModal({ mode: "create", prereqOfId: task.id });
-      });
-
-    card.querySelector('[data-act="delete"]')
-      .addEventListener("click", () => {
-        if (!confirm(
-          `Excluir "${task.keyword}"? Isso removerá suas conexões.`
-        )) {
-          return;
-        }
-
-        Store.deleteTask(task.id);
-
-        if (pendingConnectId === task.id) {
-          clearConnection();
-        }
-
-        runtime.delete(task.id);
-        toast("Tarefa excluída.");
-        renderList();
-        renderHistory();
-      });
-
-    item.appendChild(card);
-
-    if (parents.length) {
-      const children = document.createElement("ul");
-      children.className = "tree";
-
-      parents.forEach(parent => {
-        children.appendChild(buildNode(parent, visited));
-      });
-
-      item.appendChild(children);
+    if (!matched.length) {
+      root.appendChild(element("div", "emptyState",
+        Store.all().length
+          ? "Nenhuma tarefa corresponde aos filtros."
+          : "Nenhuma tarefa. Clique em + Nova tarefa para começar."));
     }
 
-    return item;
-  }
-
-  function doComplete(id) {
-    const result = Store.toggleComplete(id);
-
-    if (!result.ok) {
-      if (result.reason === "blocked") {
-        toast("Conclua antes os pré-requisitos.", "warn");
-      }
-      return;
-    }
-
-    if (pendingConnectId === id) clearConnection();
-
-    runtime.delete(id);
-    toast("Tarefa concluída — depositada no sedimento.");
-    renderList();
-    renderHistory();
-
-    if (currentView === "organism") {
-      renderOrganism();
-    }
+    $("filterCount").textContent =
+      `${matched.length} de ${Store.all().length} tarefa(s)`;
   }
 
   function renderHistory() {
-    const list = $("historyList");
+    const root = $("historyList");
+    root.replaceChildren();
 
-    const items = Store.all()
+    const completed = Store.all()
       .filter(task => task.completed)
       .sort((a, b) => b.completedAt - a.completedAt);
 
-    if (!items.length) {
-      list.innerHTML =
-        '<div class="histEmpty">Nenhuma tarefa concluída.</div>';
+    if (!completed.length) {
+      root.appendChild(element("p", "", "Nenhuma tarefa concluída."));
       return;
     }
 
-    list.innerHTML = items.map(task => {
-      const date = new Date(task.completedAt);
-      const when = Number.isNaN(date.getTime())
-        ? "Data indisponível"
-        : date.toLocaleDateString("pt-BR") + " às " +
-          date.toLocaleTimeString("pt-BR", {
-            hour: "2-digit",
-            minute: "2-digit"
-          });
-
-      return `
-        <div class="histItem">
-          <div class="kw">${escapeHtml(task.keyword)}</div>
-          <div class="when">${escapeHtml(when)}</div>
-        </div>
-      `;
-    }).join("");
+    completed.forEach(task => {
+      const item = element("div", "histItem");
+      item.append(
+        element("strong", "", task.keyword),
+        element("p", "", `Início: ${formatDate(task.startDate)}`),
+        element("p", "", `Conclusão: ${formatTimestamp(task.completedAt)}`)
+      );
+      root.appendChild(item);
+    });
   }
 
-  $("historyToggle").addEventListener("click", () => {
-    historyPanel.classList.add("open");
-    renderHistory();
-  });
+  function fillTaskSelect(select, excludeId = null) {
+    select.replaceChildren();
 
-  $("historyClose").addEventListener("click", () => {
-    historyPanel.classList.remove("open");
-  });
+    Store.getActiveTasks()
+      .filter(task => task.id !== excludeId)
+      .sort((a, b) => a.keyword.localeCompare(b.keyword, "pt-BR"))
+      .forEach(task =>
+        select.add(new Option(task.keyword, task.id)));
+  }
 
-  function openModal(state) {
-    const task = state.mode === "edit"
-      ? Store.get(state.taskId)
-      : null;
+  function inheritRelatedType() {
+    if (!modalState || modalState.mode !== "create" ||
+        modalState.typeTouched || !$("fieldRelation").value) return;
 
-    if (state.mode === "edit" && !task) return;
+    const origin = Store.get($("fieldTarget").value);
+    if (origin && !origin.completed) {
+      $("fieldType").value = origin.type;
+    }
+  }
 
-    modalState = state;
+  function updateRelationField() {
+    $("fieldTarget").disabled = !$("fieldRelation").value;
+    inheritRelatedType();
+  }
 
-    $("modalTitle").textContent =
-      state.mode === "edit" ? "Editar tarefa" : "Nova tarefa";
+  function openTaskModal(state) {
+    const task = state.mode === "edit" ? Store.get(state.id) : null;
+    if (state.mode === "edit" && (!task || task.completed)) return;
 
+    modalState = { ...state, typeTouched: false };
+    $("modalTitle").textContent = task ? "Editar tarefa" : "Nova tarefa";
     $("fieldKeyword").value = task?.keyword || "";
     $("fieldDesc").value = task?.description || "";
-    $("fieldType").value = task?.type || "pessoal";
-    $("prereqField").hidden = state.mode === "edit";
+    const origin = state.relation && state.targetId
+      ? Store.get(state.targetId)
+      : null;
 
-    if (state.mode === "edit") {
-      $("modalHint").textContent =
-        "Altere os campos desejados e toque em Salvar.";
-    } else {
-      const select = $("fieldPrereq");
+    $("fieldType").value = task?.type || origin?.type || "pessoal";
+    $("fieldUrgency").value = String(task?.urgency || 3);
+    $("fieldStartDate").value = task?.startDate || today();
+    $("fieldStartDate").max = today();
+    $("relationFields").hidden = !!task;
 
-      select.replaceChildren(
-        new Option("Nenhum (tarefa raiz)", "")
-      );
+    fillTaskSelect($("fieldTarget"));
+    $("fieldRelation").value = state.relation || "";
+    if (state.targetId) $("fieldTarget").value = state.targetId;
+    updateRelationField();
 
-      Store.getActiveTasks().forEach(activeTask => {
-        select.add(
-          new Option(activeTask.keyword, activeTask.id)
-        );
-      });
+    let availability = $("taskAvailability");
 
-      select.value = state.prereqOfId || "";
-      select.disabled = !!state.prereqOfId;
-
-      $("modalHint").textContent = state.prereqOfId
-        ? `Esta tarefa será pré-requisito de "${Store.get(state.prereqOfId)?.keyword || "outra tarefa"}".`
-        : "Somente a palavra-chave é obrigatória.";
+    if (!availability) {
+      availability = element("p", "availability");
+      availability.id = "taskAvailability";
+      availability.setAttribute("role", "status");
+      $("modalTitle").insertAdjacentElement("afterend", availability);
     }
 
-    overlay.classList.add("open");
-    requestAnimationFrame(() => $("fieldKeyword").focus());
+    availability.hidden = !task;
+    availability.textContent = task ? availabilityLabel(task) : "";
+    availability.classList.toggle("readyText", !!task && isReady(task));
+
+    $("taskDialog").showModal();
+    $("fieldKeyword").focus();
   }
 
-  function closeModal() {
-    overlay.classList.remove("open");
+  $("fieldRelation").addEventListener("change", updateRelationField);
+  $("fieldTarget").addEventListener("change", inheritRelatedType);
+  $("fieldType").addEventListener("change", () => {
+    if (modalState) modalState.typeTouched = true;
+  });
+  $("newTaskBtn").addEventListener("click", () =>
+    openTaskModal({ mode: "create" }));
+  $("modalCancel").addEventListener("click", () =>
+    $("taskDialog").close());
+  $("taskDialog").addEventListener("close", () => {
     modalState = null;
-  }
-
-  $("newTaskBtn").addEventListener("click", () => {
-    openModal({ mode: "create" });
   });
 
-  $("modalCancel").addEventListener("click", closeModal);
-
-  overlay.addEventListener("click", event => {
-    if (event.target === overlay) closeModal();
-  });
-
-  $("modal").addEventListener("submit", event => {
+  $("taskForm").addEventListener("submit", event => {
     event.preventDefault();
     if (!modalState) return;
 
     const keyword = $("fieldKeyword").value.trim();
+    const startDate = $("fieldStartDate").value;
+    const relation = $("fieldRelation").value;
+    const targetId = $("fieldTarget").value;
 
     if (!keyword) {
-      toast("Informe uma palavra-chave.", "err");
-      $("fieldKeyword").focus();
+      toast("Informe uma palavra-chave.", "warn");
+      return;
+    }
+
+    if (!validDate(startDate) || startDate > today()) {
+      toast("Escolha uma data inicial válida, até hoje.", "warn");
+      return;
+    }
+
+    if (modalState.mode === "create" && relation &&
+        (!Store.get(targetId) || Store.get(targetId).completed)) {
+      toast("Escolha uma tarefa ativa para criar a dependência.", "warn");
       return;
     }
 
     const values = {
       keyword,
+      startDate,
       description: $("fieldDesc").value.trim(),
-      type: $("fieldType").value
+      type: $("fieldType").value,
+      urgency: Number($("fieldUrgency").value),
+      relation,
+      targetId
     };
 
     if (modalState.mode === "edit") {
-      Store.editTask(modalState.taskId, values);
-      toast("Tarefa atualizada.");
+      Store.editTask(modalState.id, values);
     } else {
-      Store.createTask({
-        ...values,
-        prereqOfId:
-          modalState.prereqOfId ||
-          $("fieldPrereq").value ||
-          null
-      });
-
-      toast("Tarefa criada.");
+      Store.createTask(values);
     }
 
-    closeModal();
-    renderList();
-
-    if (currentView === "organism") {
-      renderOrganism();
-    }
+    $("taskDialog").close();
+    refresh();
+    toast("Tarefa salva.");
   });
 
-  function fitCamera() {
-    cam.x = CENTER.x;
-    cam.y = CENTER.y;
-    cam.scale = 1;
-    applyCamera();
-  }
-
-  function resizeViewport() {
-    if (currentView !== "organism") return;
-
-    const rect = svg.getBoundingClientRect();
-    const width = Math.max(1, Math.round(rect.width));
-    const height = Math.max(1, Math.round(rect.height));
-    const box = svg.viewBox.baseVal;
-
-    if (box.width === width && box.height === height &&
-        WORLD.w === width && WORLD.h === height) {
+  function renderDependencies() {
+    const task = Store.get(dependencyId);
+    if (!task || task.completed) {
+      $("dependencyDialog").close();
       return;
     }
 
-    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-    setWorldBounds(width, height);
+    $("dependencyTitle").textContent = task.keyword;
+    const root = $("dependencyList");
+    root.replaceChildren();
 
-    // Uma mudança real de tela reposiciona o mundo no espaço novo.
-    // Isso evita manter uma câmera deslocada para fora da área visível.
-    fitCamera();
-    renderOrganism();
-  }
+    const parents = Store.getParents(task.id);
 
-  function applyCamera() {
-    const box = svg.viewBox.baseVal;
-    if (!box.width || !box.height) return;
-
-    camera.setAttribute(
-      "transform",
-      `translate(${box.width / 2 - cam.x * cam.scale},` +
-      `${box.height / 2 - cam.y * cam.scale}) scale(${cam.scale})`
-    );
-  }
-
-  function shapeFor(task, radius) {
-    let shape;
-
-    switch (task.type) {
-      case "terceiros":
-        shape = document.createElementNS(SVG_NS, "rect");
-        shape.setAttribute("x", -radius * 0.88);
-        shape.setAttribute("y", -radius * 0.88);
-        shape.setAttribute("width", radius * 1.76);
-        shape.setAttribute("height", radius * 1.76);
-        shape.setAttribute("rx", 5);
-        break;
-
-      case "familia":
-        shape = document.createElementNS(SVG_NS, "polygon");
-        shape.setAttribute(
-            "points",
-            `0,${-radius} ${radius},0 0,${radius} ${-radius},0`
-        );
-        break;
-
-      case "trabalho": {
-        shape = document.createElementNS(SVG_NS, "polygon");
-
-        const points = Array.from({ length: 6 }, (_, index) => {
-          const angle = Math.PI / 3 * index - Math.PI / 2;
-
-          return `${Math.cos(angle) * radius},${Math.sin(angle) * radius}`;
-        });
-
-        shape.setAttribute("points", points.join(" "));
-        break;
-      }
-
-      default:
-        shape = document.createElementNS(SVG_NS, "circle");
-        shape.setAttribute("r", radius);
+    if (!parents.length) {
+      root.appendChild(element("p", "", "Nenhum pré-requisito."));
     }
 
-    return shape;
+    parents.forEach(parent => {
+      const row = element("div", "dependencyRow");
+      row.append(
+        element("span", "", parent.keyword),
+        action("Remover vínculo", () => {
+          Store.disconnectTask(parent.id, task.id);
+          renderDependencies();
+          refresh();
+        })
+      );
+      root.appendChild(row);
+    });
+
+    fillTaskSelect($("dependencyTarget"), task.id);
+  }
+
+  function openDependencies(id) {
+    dependencyId = id;
+    renderDependencies();
+    $("dependencyDialog").showModal();
+  }
+
+  $("dependencyClose").addEventListener("click", () =>
+    $("dependencyDialog").close());
+
+  $("dependencyForm").addEventListener("submit", event => {
+    event.preventDefault();
+
+    const targetId = $("dependencyTarget").value;
+    if (!targetId) {
+      toast("Não há outra tarefa ativa disponível.", "warn");
+      return;
+    }
+
+    const prerequisite = $("dependencyRelation").value === "prerequisite";
+    const result = prerequisite
+      ? Store.connectTask(targetId, dependencyId)
+      : Store.connectTask(dependencyId, targetId);
+
+    if (!result.ok) {
+      const messages = {
+        cycle: "Essa ligação criaria um ciclo de dependências.",
+        exists: "Essa ligação já existe.",
+        same: "Uma tarefa não pode depender de si mesma.",
+        missing: "Uma das tarefas não está disponível.",
+        completed: "Só é possível conectar tarefas ativas."
+      };
+      toast(messages[result.reason] || "Não foi possível conectar.", "warn");
+      return;
+    }
+
+    renderDependencies();
+    refresh();
+    toast("Dependência adicionada.");
+  });
+
+  function shape(type, radius) {
+    if (type === "terceiros") {
+      return svgElement("rect", {
+        x: -radius * .88,
+        y: -radius * .88,
+        width: radius * 1.76,
+        height: radius * 1.76,
+        rx: 5
+      });
+    }
+
+    if (type === "familia") {
+      return svgElement("polygon", {
+        points: `0,${-radius} ${radius},0 0,${radius} ${-radius},0`
+      });
+    }
+
+    if (type === "trabalho") {
+      const points = Array.from({ length: 6 }, (_, index) => {
+        const angle = index * Math.PI / 3 - Math.PI / 2;
+        return `${Math.cos(angle) * radius},${Math.sin(angle) * radius}`;
+      }).join(" ");
+      return svgElement("polygon", { points });
+    }
+
+    return svgElement("circle", { r: radius });
   }
 
   function truncate(text, length) {
@@ -471,434 +659,562 @@
     if (currentView !== "organism") return;
 
     camera.replaceChildren();
+    nodes.clear();
+    lines.length = 0;
 
-    const background = document.createElementNS(SVG_NS, "rect");
-    background.setAttribute("x", -2000);
-    background.setAttribute("y", -2000);
-    background.setAttribute("width", WORLD.w + 4000);
-    background.setAttribute("height", WORLD.h + 4000);
-    background.setAttribute("fill", "#070911");
-    camera.appendChild(background);
+    camera.appendChild(svgElement("rect", {
+      x: -10000,
+      y: -10000,
+      width: 20000,
+      height: 20000,
+      fill: "#070911"
+    }));
 
-    const sedimentTop = getBounds().sedimentTop;
+    camera.appendChild(svgElement("rect", {
+      x: 0,
+      y: WORLD.h * .78,
+      width: WORLD.w,
+      height: WORLD.h * .22,
+      fill: "url(#floorLight)"
+    }));
 
-    const floor = document.createElementNS(SVG_NS, "rect");
-    floor.setAttribute("x", 0);
-    floor.setAttribute("y", sedimentTop - 150);
-    floor.setAttribute("width", WORLD.w);
-    floor.setAttribute(
-      "height",
-      WORLD.h - sedimentTop + 550
-    );
-    floor.setAttribute("fill", "url(#gradFloor)");
-    camera.appendChild(floor);
+    const visible = visibleTasks();
+    const visibleIds = new Set(visible.map(task => task.id));
 
-    const tasks = Store.all();
-
-    tasks.filter(task => !task.completed).forEach(task => {
+    visible.filter(task => !task.completed).forEach(task => {
       Store.getParents(task.id).forEach(parent => {
-        if (parent.completed) return;
+        if (parent.completed || !visibleIds.has(parent.id)) return;
 
-        const path = document.createElementNS(SVG_NS, "path");
-        const middleX = (task.x + parent.x) / 2;
-        const middleY = (task.y + parent.y) / 2 - 40;
-
-        path.setAttribute(
-          "d",
-          `M ${parent.x} ${parent.y} Q ${middleX} ${middleY} ${task.x} ${task.y}`
-        );
-        path.setAttribute("class", "connLine");
-        path.setAttribute("stroke", "url(#gradConn)");
-        path.setAttribute("stroke-width", 2);
-        path.setAttribute("opacity", 0.55);
+        const path = svgElement("path", { class: "connLine" });
         camera.appendChild(path);
+        lines.push({ path, parentId: parent.id, taskId: task.id });
       });
     });
 
-    const palette = [
-      "url(#gradGreen)",
-      "url(#gradViolet)",
-      "url(#gradBlue)",
-      "url(#gradOrange)"
-    ];
+    visible.forEach(task => {
+      const visual = appearance(task);
+      const ready = isReady(task);
+      const color = task.completed
+        ? "#b88b55"
+        : `hsl(${visual.hue.toFixed(1)} 75% 57%)`;
 
-    tasks.forEach(task => {
-      const weight = task.completed
-        ? 0
-        : Store.getWeight(task.id);
-
-      const radius = task.completed
-        ? 22
-        : Math.min(70, 24 + weight * 5);
-
-      const depth = task.completed
-        ? 0
-        : Store.getDepth(task.id);
-
-      const group = document.createElementNS(SVG_NS, "g");
-
-      group.setAttribute(
-        "class",
-        "node" +
+      const group = svgElement("g", {
+        class: "node" +
           (task.completed ? " sediment" : "") +
-          (pendingConnectId === task.id ? " selected" : "")
-      );
+          (visual.alert ? " alert" : "") +
+          (ready ? " ready" : "") +
+          (selected.has(task.id) ? " selected" : ""),
+        "data-id": task.id
+      });
 
-      group.setAttribute("data-id", task.id);
+      group.style.setProperty("--cell-color", color);
 
-      group.setAttribute(
-        "transform",
-        `translate(${task.x},${task.y})` +
-          (task.completed ? " scale(1,0.82)" : "")
-      );
+      const title = svgElement("title");
+      title.textContent =
+        `${task.keyword} — ${TYPES[task.type]} — ` +
+        `${visual.age} dias — ${URGENCIES[task.urgency].label}` +
+        (visual.alert ? " — alerta máximo" : "") +
+        " — " + availabilityLabel(task);
 
-      const membrane = shapeFor(task, radius);
-      membrane.setAttribute("class", "membrane");
+      group.appendChild(title);
 
-      membrane.setAttribute(
-        "fill",
-        task.completed
-          ? "url(#gradSediment)"
-          : palette[Math.min(depth, palette.length - 1)]
-      );
+      const cellBody = svgElement("g", { class: "cellBody" });
+      const base = shape(task.type, visual.radius);
+      base.setAttribute("class", "membrane");
+      base.setAttribute("fill", task.completed
+        ? "url(#sedimentLight)"
+        : color);
+      cellBody.appendChild(base);
 
-      membrane.setAttribute(
-        "stroke",
-        task.completed
-          ? "rgba(255,224,170,0.72)"
-          : "rgba(232,255,250,0.68)"
-      );
-
-      membrane.setAttribute(
-        "stroke-width",
-        task.completed ? 2.1 : 2.4
-      );
+      const light = shape(task.type, visual.radius);
+      light.setAttribute("fill", "url(#cellLight)");
+      light.setAttribute("pointer-events", "none");
+      cellBody.appendChild(light);
 
       if (!task.completed) {
-        membrane.setAttribute(
-          "filter",
-          "url(#membraneGlow)"
-        );
+        const nucleusRadius = Math.max(5, visual.radius * .24);
+
+        if (ready) {
+          cellBody.appendChild(svgElement("circle", {
+            class: "readyHalo",
+            r: nucleusRadius * 1.65,
+            fill: "#43ff72",
+            "fill-opacity": ".18",
+            stroke: "#43ff72",
+            "stroke-width": "1.5",
+            "pointer-events": "none"
+          }));
+        }
+
+        cellBody.appendChild(svgElement("circle", {
+          class: ready ? "readyNucleus" : "blockedNucleus",
+          r: nucleusRadius,
+          fill: ready ? "#43ff72" : "rgba(255,255,255,.4)",
+          stroke: ready ? "#e4ffe9" : "none",
+          "stroke-width": ready ? "1.3" : "0",
+          "pointer-events": "none"
+        }));
       }
 
-      group.appendChild(membrane);
+      group.appendChild(cellBody);
+      group.appendChild(svgElement("circle", {
+        class: "selectionRing",
+        r: visual.radius + 7
+      }));
 
-      if (!task.completed) {
-        const nucleus =
-          document.createElementNS(SVG_NS, "circle");
-
-        nucleus.setAttribute(
-          "r",
-          Math.max(4, radius * 0.22)
-        );
-
-        nucleus.setAttribute(
-          "fill",
-          "rgba(255,255,255,0.35)"
-        );
-
-        group.appendChild(nucleus);
-      }
-
-      const label =
-        document.createElementNS(SVG_NS, "text");
-
-      label.setAttribute("class", "nodeLabel");
-      label.setAttribute("text-anchor", "middle");
-      label.setAttribute(
-        "y",
-        task.completed ? 4 : radius * 1.12 + 17
-      );
-      label.setAttribute(
-        "font-size",
-        task.completed ? 10 : 12
-      );
-
-      label.textContent = truncate(
-        task.keyword,
-        task.completed ? 12 : 20
-      );
-
+      const label = svgElement("text", {
+        class: "nodeLabel",
+        y: task.completed ? 4 : visual.radius + 18
+      });
+      label.textContent = truncate(task.keyword, task.completed ? 12 : 22);
       group.appendChild(label);
+
+      if (!task.completed) {
+        const age = svgElement("text", {
+          class: "nodeAge",
+          y: visual.radius + 32
+        });
+        age.textContent = visual.alert
+          ? `${visual.age} dias · ALERTA`
+          : `${visual.age}/${visual.days} dias`;
+        group.appendChild(age);
+      }
+
       camera.appendChild(group);
+      nodes.set(task.id, group);
     });
 
+    paintPositions();
+    applyCamera();
+    updateControls();
+  }
+
+  function paintPositions() {
+    nodes.forEach((node, id) => {
+      const task = Store.get(id);
+      if (!task) return;
+
+      node.setAttribute("transform",
+        `translate(${task.x},${task.y})` +
+        (task.completed ? " scale(1,.85)" : ""));
+    });
+
+    lines.forEach(({ path, parentId, taskId }) => {
+      const parent = Store.get(parentId);
+      const task = Store.get(taskId);
+      if (!parent || !task) return;
+
+      const middleX = (parent.x + task.x) / 2;
+      const middleY = (parent.y + task.y) / 2 - 25;
+      path.setAttribute("d",
+        `M ${parent.x} ${parent.y} Q ${middleX} ${middleY} ${task.x} ${task.y}`);
+    });
+  }
+
+  function applyCamera() {
+    camera.setAttribute("transform",
+      `translate(${WORLD.w / 2 - cam.x * cam.scale},` +
+      `${WORLD.h / 2 - cam.y * cam.scale}) scale(${cam.scale})`);
+  }
+
+  function fitCamera() {
+    cam.x = CENTER.x;
+    cam.y = CENTER.y;
+    cam.scale = 1;
     applyCamera();
   }
 
-  function svgPoint(event) {
+  function resizeViewport() {
+    if (currentView !== "organism") return;
+
     const rect = svg.getBoundingClientRect();
-    const box = svg.viewBox.baseVal;
+    if (rect.width < 1 || rect.height < 1) return;
 
-    const screenX =
-      (event.clientX - rect.left) /
-      (rect.width || 1) * box.width;
+    const width = Math.round(rect.width);
+    const height = Math.round(rect.height);
+    if (WORLD.w === width && WORLD.h === height) return;
 
-    const screenY =
-      (event.clientY - rect.top) /
-      (rect.height || 1) * box.height;
-
-    return {
-      x: (screenX - box.width / 2) / cam.scale + cam.x,
-      y: (screenY - box.height / 2) / cam.scale + cam.y
-    };
-  }
-
-  function handleNodeTap(id) {
-    const task = Store.get(id);
-    if (!task || task.completed) return;
-
-    if (pendingConnectId === null) {
-      pendingConnectId = id;
-
-      showHint(
-        `Pré-requisito: "${task.keyword}". Toque na tarefa dependente ou no fundo para cancelar.`
-      );
-
-      renderOrganism();
-      return;
-    }
-
-    if (pendingConnectId === id) {
-      clearConnection();
-      renderOrganism();
-      return;
-    }
-
-    const result =
-      Store.connectTask(pendingConnectId, id);
-
-    clearConnection();
-
-    if (!result.ok) {
-      const messages = {
-        exists: "Essa conexão já existe.",
-        cycle: "Isso criaria um ciclo.",
-        same: "Não é possível conectar a si mesma."
-      };
-
-      toast(
-        messages[result.reason] ||
-          "Não foi possível conectar.",
-        "err"
-      );
-    } else {
-      toast("Conexão criada.");
-    }
-
-    renderList();
+    setWorldBounds(width, height);
+    svg.setAttribute("viewBox", `0 0 ${WORLD.w} ${WORLD.h}`);
+    runtime.clear();
+    fitCamera();
     renderOrganism();
   }
 
+  function point(event) {
+    const rect = svg.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / (rect.width || 1) * WORLD.w;
+    const y = (event.clientY - rect.top) / (rect.height || 1) * WORLD.h;
+
+    return {
+      x: (x - WORLD.w / 2) / cam.scale + cam.x,
+      y: (y - WORLD.h / 2) / cam.scale + cam.y
+    };
+  }
+
+  function zoom(factor, event = null) {
+    const before = event ? point(event) : null;
+    cam.scale = Math.max(.2, Math.min(2.5, cam.scale * factor));
+
+    if (event) {
+      const after = point(event);
+      cam.x += before.x - after.x;
+      cam.y += before.y - after.y;
+    }
+    applyCamera();
+  }
+
+  function updateSelectionVisual() {
+    nodes.forEach((node, id) =>
+      node.classList.toggle("selected", selected.has(id)));
+    updateControls();
+  }
+
   svg.addEventListener("pointerdown", event => {
+    if (gesture || (event.pointerType === "mouse" && event.button !== 0))
+      return;
+
     lastInteraction = Date.now();
-
     const node = event.target.closest(".node");
+    const task = node ? Store.get(node.dataset.id) : null;
+    const start = point(event);
 
-    if (node) {
-      const id = node.getAttribute("data-id");
-      const task = Store.get(id);
+    if (task && !task.completed) {
+      const dragIds = organizing && selected.has(task.id)
+        ? [...selected]
+        : [task.id];
 
-      if (!task || task.completed) return;
+      const origins = dragIds.map(id => {
+        const item = Store.get(id);
+        return { id, x: item.x, y: item.y };
+      });
 
-      const point = svgPoint(event);
-
-      drag = {
-        id,
+      gesture = {
+        kind: "node",
+        id: task.id,
         pointerId: event.pointerId,
-        startX: point.x,
-        startY: point.y,
-        offsetX: point.x - task.x,
-        offsetY: point.y - task.y,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        start,
+        origins,
         moved: false
       };
-
-      svg.setPointerCapture(event.pointerId);
-      return;
+    } else {
+      gesture = {
+        kind: "pan",
+        pointerId: event.pointerId,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        camX: cam.x,
+        camY: cam.y,
+        moved: false
+      };
     }
 
-    pan = {
-      pointerId: event.pointerId,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      camX: cam.x,
-      camY: cam.y,
-      moved: false
-    };
-
-    svg.classList.add("panning");
     svg.setPointerCapture(event.pointerId);
   });
 
   svg.addEventListener("pointermove", event => {
-    if (drag?.pointerId === event.pointerId) {
-      lastInteraction = Date.now();
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    lastInteraction = Date.now();
 
-      const point = svgPoint(event);
+    const dx = event.clientX - gesture.clientX;
+    const dy = event.clientY - gesture.clientY;
+    if (Math.hypot(dx, dy) > 5) gesture.moved = true;
+    if (!gesture.moved) return;
 
-      if (Math.hypot(
-        point.x - drag.startX,
-        point.y - drag.startY
-      ) > 4) {
-        drag.moved = true;
-      }
+    if (gesture.kind === "node") {
+      const position = point(event);
+      const moveX = position.x - gesture.start.x;
+      const moveY = position.y - gesture.start.y;
 
-      if (drag.moved) {
+      gesture.origins.forEach(origin =>
         Store.updatePosition(
-          drag.id,
-          point.x - drag.offsetX,
-          point.y - drag.offsetY
-        );
-
-        renderOrganism();
-      }
-
-      return;
-    }
-
-    if (pan?.pointerId === event.pointerId) {
-      lastInteraction = Date.now();
-
-      const dx = event.clientX - pan.clientX;
-      const dy = event.clientY - pan.clientY;
-
-      if (Math.hypot(dx, dy) > 4) {
-        pan.moved = true;
-      }
-
-      cam.x = pan.camX - dx / cam.scale;
-      cam.y = pan.camY - dy / cam.scale;
+          origin.id,
+          origin.x + moveX,
+          origin.y + moveY
+        ));
+      paintPositions();
+    } else {
+      const rect = svg.getBoundingClientRect();
+      cam.x = gesture.camX - dx * WORLD.w /
+        (rect.width || 1) / cam.scale;
+      cam.y = gesture.camY - dy * WORLD.h /
+        (rect.height || 1) / cam.scale;
+      svg.classList.add("panning");
       applyCamera();
     }
   });
 
-  svg.addEventListener("pointerup", event => {
-    if (drag?.pointerId === event.pointerId) {
-      const { id, moved } = drag;
-      drag = null;
-
-      if (moved) {
-        lastTap = null;
-        Store.save();
-      } else {
-        const now = Date.now();
-
-        if (lastTap?.id === id &&
-            now - lastTap.time < 350) {
-          clearTimeout(lastTap.timer);
-          lastTap = null;
-          doComplete(id);
-        } else {
-          if (lastTap) clearTimeout(lastTap.timer);
-
-          const tap = {
-            id,
-            time: now,
-            timer: setTimeout(() => {
-              if (lastTap !== tap) return;
-
-              lastTap = null;
-              handleNodeTap(id);
-            }, 350)
-          };
-
-          lastTap = tap;
-        }
-      }
-    }
-
-    if (pan?.pointerId === event.pointerId) {
-      const moved = pan.moved;
-      pan = null;
-      svg.classList.remove("panning");
-
-      if (!moved && pendingConnectId) {
-        clearConnection();
-        renderOrganism();
-      }
-    }
-  });
-
-  svg.addEventListener("pointercancel", () => {
-    drag = null;
-    pan = null;
+  function finishGesture(event, cancelled = false) {
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    const previous = gesture;
+    gesture = null;
+    lastInteraction = Date.now();
     svg.classList.remove("panning");
-    Store.save();
-  });
 
-  function zoomAt(factor, clientX, clientY) {
-    const anchored = clientX !== undefined;
-
-    const before = anchored
-      ? svgPoint({ clientX, clientY })
-      : null;
-
-    cam.scale = Math.max(
-      0.12,
-      Math.min(2.2, cam.scale * factor)
-    );
-
-    if (anchored) {
-      const after = svgPoint({ clientX, clientY });
-      cam.x += before.x - after.x;
-      cam.y += before.y - after.y;
+    if (svg.hasPointerCapture(event.pointerId)) {
+      svg.releasePointerCapture(event.pointerId);
     }
 
-    applyCamera();
+    if (!cancelled && !previous.moved &&
+        previous.kind === "node" && organizing) {
+      if (selected.has(previous.id)) selected.delete(previous.id);
+      else selected.add(previous.id);
+      updateSelectionVisual();
+    }
+
+    if (previous.moved) persist();
   }
+
+  svg.addEventListener("pointerup", event => finishGesture(event));
+  svg.addEventListener("pointercancel", event =>
+    finishGesture(event, true));
+  svg.addEventListener("lostpointercapture", event =>
+    finishGesture(event, true));
 
   svg.addEventListener("wheel", event => {
     event.preventDefault();
-
-    zoomAt(
-      event.deltaY < 0 ? 1.1 : 0.9,
-      event.clientX,
-      event.clientY
-    );
+    lastInteraction = Date.now();
+    zoom(event.deltaY < 0 ? 1.1 : .9, event);
   }, { passive: false });
 
-  $("zoomIn").addEventListener(
-    "click",
-    () => zoomAt(1.2)
-  );
+  $("zoomIn").addEventListener("click", () => zoom(1.2));
+  $("zoomOut").addEventListener("click", () => zoom(.83));
+  $("zoomReset").addEventListener("click", fitCamera);
 
-  $("zoomOut").addEventListener(
-    "click",
-    () => zoomAt(0.83)
-  );
+  function updateControls() {
+    $("organizeTools").hidden = !organizing;
 
-  $("zoomReset").addEventListener(
-    "click",
-    fitCamera
-  );
+    const compactTools = $("compactOrganizeMenu");
+    if (compactTools) compactTools.hidden = !organizing;
 
-  if ("ResizeObserver" in window) {
-    new ResizeObserver(resizeViewport).observe(orgWrap);
-  } else {
-    window.addEventListener("resize", resizeViewport);
+    const toolbar = document.querySelector(".organismToolbar");
+    if (toolbar) toolbar.hidden = currentView !== "organism";
+    const strip = $("compactControlStrip");
+    if (strip) strip.hidden = currentView !== "organism";
+    $("selectedCount").textContent = `${selected.size} selecionadas`;
+    $("pauseBtn").disabled = organizing;
+    $("pauseBtn").textContent = paused ? "▶" : "Ⅱ";
+    $("pauseBtn").title = paused ? "Retomar movimento" : "Pausar movimento";
+    $("pauseBtn").setAttribute("aria-label",
+      paused ? "Retomar movimento" : "Pausar movimento");
+    $("restoreLayoutBtn").disabled = !Store.hasLayout();
+    $("alignBtn").disabled = selected.size < 2;
+    $("distributeXBtn").disabled = selected.size < 3;
+    $("distributeYBtn").disabled = selected.size < 3;
+
+    $("hintBar").textContent = organizing
+      ? "Toque para selecionar ou desmarcar. Arraste para mover. As ferramentas atuam só nas selecionadas."
+      : paused
+        ? "Movimento pausado. Arraste as células ou use Organizar."
+        : "Arraste para posicionar. Edição, dependências e conclusão ficam na Lista.";
   }
 
-  function randomTarget() {
-    const margin = WORLD.padding;
+  function autoOrganize() {
+    organizing = true;
+    paused = true;
+    selected.clear();
+    runtime.clear();
+    updateControls();
+    resizeViewport();
 
+    const tasks = visibleActive().sort((a, b) =>
+      a.keyword.localeCompare(b.keyword, "pt-BR"));
+
+    if (!tasks.length) {
+      renderOrganism();
+      toast("Não há células ativas visíveis para organizar.", "warn");
+      return;
+    }
+
+    const columns = Math.max(1, Math.min(
+      tasks.length,
+      Math.ceil(Math.sqrt(tasks.length * WORLD.w / WORLD.h))
+    ));
+    const rows = Math.ceil(tasks.length / columns);
+
+    tasks.forEach((task, index) => {
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+      Store.updatePosition(
+        task.id,
+        (column + .5) * WORLD.w / columns,
+        (row + .5) * WORLD.h / rows
+      );
+    });
+
+    persist();
+    renderOrganism();
+    toast("Células visíveis organizadas. Selecione as que deseja ajustar.");
+  }
+
+  function selectedTasks() {
+    return [...selected].map(id => Store.get(id))
+      .filter(task => task && !task.completed && matches(task));
+  }
+
+  function extents(task) {
+    const radius = appearance(task).radius;
+    const halfX = task.type === "terceiros" ? radius * .88 : radius;
+    const halfY = task.type === "terceiros" ? radius * .88 : radius;
+    return { halfX, halfY };
+  }
+
+  function alignSelection() {
+    const tasks = selectedTasks();
+    if (tasks.length < 2) return;
+
+    const left = Math.min(...tasks.map(task =>
+      task.x - extents(task).halfX));
+    const right = Math.max(...tasks.map(task =>
+      task.x + extents(task).halfX));
+    const top = Math.min(...tasks.map(task =>
+      task.y - extents(task).halfY));
+    const bottom = Math.max(...tasks.map(task =>
+      task.y + extents(task).halfY));
+
+    const choice = $("alignChoice").value;
+
+    tasks.forEach(task => {
+      const { halfX, halfY } = extents(task);
+      let x = task.x;
+      let y = task.y;
+
+      if (choice === "left") x = left + halfX;
+      if (choice === "right") x = right - halfX;
+      if (choice === "centerX") x = (left + right) / 2;
+      if (choice === "top") y = top + halfY;
+      if (choice === "bottom") y = bottom - halfY;
+      if (choice === "centerY") y = (top + bottom) / 2;
+
+      Store.updatePosition(task.id, x, y);
+    });
+
+    paintPositions();
+    persist();
+  }
+
+  function distribute(axis) {
+    const tasks = selectedTasks().sort((a, b) => a[axis] - b[axis]);
+    if (tasks.length < 3) return;
+
+    const sizeKey = axis === "x" ? "halfX" : "halfY";
+    const first = tasks[0];
+    const last = tasks[tasks.length - 1];
+    const start = first[axis] - extents(first)[sizeKey];
+    const end = last[axis] + extents(last)[sizeKey];
+    const totalSize = tasks.reduce((sum, task) =>
+      sum + 2 * extents(task)[sizeKey], 0);
+
+    const gap = (end - start - totalSize) / (tasks.length - 1);
+
+    if (gap < 0) {
+      toast(
+        "Falta espaço nesse intervalo. Afaste as células das extremidades e tente novamente.",
+        "warn"
+      );
+      return;
+    }
+
+    let cursor = start;
+    tasks.forEach(task => {
+      const half = extents(task)[sizeKey];
+      const coordinate = cursor + half;
+
+      Store.updatePosition(
+        task.id,
+        axis === "x" ? coordinate : task.x,
+        axis === "y" ? coordinate : task.y
+      );
+
+      cursor += half * 2 + gap;
+    });
+
+    paintPositions();
+    persist();
+  }
+
+  $("organizeBtn").addEventListener("click", autoOrganize);
+  $("alignBtn").addEventListener("click", alignSelection);
+  $("distributeXBtn").addEventListener("click", () => distribute("x"));
+  $("distributeYBtn").addEventListener("click", () => distribute("y"));
+
+  $("selectAllBtn").addEventListener("click", () => {
+    visibleActive().forEach(task => selected.add(task.id));
+    updateSelectionVisual();
+  });
+
+  $("clearSelectionBtn").addEventListener("click", () => {
+    selected.clear();
+    updateSelectionVisual();
+  });
+
+  $("saveLayoutBtn").addEventListener("click", () => {
+    Store.saveLayout();
+    checkStorage();
+    updateControls();
+    toast("Memória salva. Ela guarda as posições de todas as tarefas ativas.");
+  });
+
+  $("restoreLayoutBtn").addEventListener("click", () => {
+    organizing = true;
+    paused = true;
+    selected.clear();
+    runtime.clear();
+    updateControls();
+    resizeViewport();
+
+    const count = Store.restoreLayout();
+    renderOrganism();
+    checkStorage();
+
+    toast(count
+      ? `${count} posição(ões) restaurada(s). Tarefas novas mantêm suas posições.`
+      : "A memória não contém posições de tarefas ativas atuais.", count ? "" : "warn");
+  });
+
+  $("resumeBtn").addEventListener("click", () => {
+    organizing = false;
+    paused = false;
+    selected.clear();
+    runtime.clear();
+    updateControls();
+    resizeViewport();
+    renderOrganism();
+  });
+
+  $("pauseBtn").addEventListener("click", () => {
+    if (organizing) return;
+    paused = !paused;
+    updateControls();
+    persist();
+  });
+
+  function changeSpeed(change) {
+    speed = Math.max(.2, Math.min(3,
+      Math.round((speed + change) * 10) / 10));
+    $("speedLabel").textContent = speed.toFixed(1).replace(".", ",") + "×";
+  }
+
+  $("speedDown").addEventListener("click", () => changeSpeed(-.2));
+  $("speedUp").addEventListener("click", () => changeSpeed(.2));
+
+  function target() {
     return {
-      x: margin + Math.random() *
-        Math.max(0, WORLD.w - 2 * margin),
-      y: margin + Math.random() *
-        Math.max(0, WORLD.h - 2 * margin)
+      x: Math.random() * WORLD.w,
+      y: Math.random() * WORLD.h
     };
   }
 
   function step(dt) {
     const active = Store.getActiveTasks();
-    const delta = Math.min(dt, 0.05) * speed;
+    const delta = Math.min(dt, .05) * speed;
 
     active.forEach(task => {
-      if (drag?.id === task.id) return;
-
       if (!runtime.has(task.id)) {
         runtime.set(task.id, {
-          target: randomTarget(),
+          target: target(),
           remaining: 3 + Math.random() * 5,
           vx: 0,
           vy: 0
@@ -908,49 +1224,34 @@
       const state = runtime.get(task.id);
       state.remaining -= delta;
 
-      const targetDistance = Math.hypot(
-        state.target.x - task.x,
-        state.target.y - task.y
-      );
-
       if (state.remaining <= 0 ||
-          targetDistance < 35) {
-        state.target = randomTarget();
+          Math.hypot(state.target.x - task.x, state.target.y - task.y) < 30) {
+        state.target = target();
         state.remaining = 3 + Math.random() * 5;
       }
 
       const dx = state.target.x - task.x;
       const dy = state.target.y - task.y;
       const distance = Math.hypot(dx, dy) || 1;
+      let vx = dx / distance * Math.min(55, distance * .35);
+      let vy = dy / distance * Math.min(55, distance * .35);
 
-      // Alvos distribuídos por toda a área, sem atração ao centro.
-      let vx = dx / distance * Math.min(90, distance * 0.45);
-      let vy = dy / distance * Math.min(90, distance * 0.45);
-
-      const links = [
+      const linked = [
         ...Store.getParents(task.id),
         ...Store.getChildren(task.id)
       ].filter(other => !other.completed);
 
-      links.forEach(other => {
-        const linkX = other.x - task.x;
-        const linkY = other.y - task.y;
-        const linkDistance =
-          Math.hypot(linkX, linkY) || 1;
-
-        // Vínculos influenciam o movimento sem confinar a rede
-        // em um círculo no meio da tela.
-        const correction = Math.max(
-          -24,
-          Math.min(24, (linkDistance - 200) * 0.12)
-        );
-
-        vx += linkX / linkDistance * correction;
-        vy += linkY / linkDistance * correction;
+      linked.forEach(other => {
+        const lx = other.x - task.x;
+        const ly = other.y - task.y;
+        const length = Math.hypot(lx, ly) || 1;
+        const correction = Math.max(-12,
+          Math.min(12, (length - 180) * .07));
+        vx += lx / length * correction;
+        vy += ly / length * correction;
       });
 
-      const smoothing = Math.min(1, delta * 2.2);
-
+      const smoothing = Math.min(1, delta * 2);
       state.vx += (vx - state.vx) * smoothing;
       state.vy += (vy - state.vy) * smoothing;
 
@@ -965,278 +1266,293 @@
       for (let j = i + 1; j < active.length; j++) {
         const a = active[i];
         const b = active[j];
-
-        if (drag?.id === a.id ||
-            drag?.id === b.id) {
-          continue;
-        }
+        const minDistance =
+          appearance(a).radius + appearance(b).radius + 12;
 
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const distance = Math.hypot(dx, dy);
+        if (distance >= minDistance) continue;
 
-        if (distance >= 90) continue;
+        const nx = distance > .01 ? dx / distance : 1;
+        const ny = distance > .01 ? dy / distance : 0;
+        const push = Math.min(8, (minDistance - distance) / 2) *
+          Math.min(1, delta * 12);
 
-        const directionX =
-          distance > 0 ? dx / distance : 1;
-
-        const directionY =
-          distance > 0 ? dy / distance : 0;
-
-        const push = (90 - distance) / 2;
-
-        Store.updatePosition(
-          a.id,
-          a.x - directionX * push,
-          a.y - directionY * push
-        );
-
-        Store.updatePosition(
-          b.id,
-          b.x + directionX * push,
-          b.y + directionY * push
-        );
+        Store.updatePosition(a.id, a.x - nx * push, a.y - ny * push);
+        Store.updatePosition(b.id, b.x + nx * push, b.y + ny * push);
       }
     }
   }
 
-  function startEngine() {
-    if (engineRunning) return;
+  function tick(now) {
+    const dt = Math.min(.05, (now - lastFrame) / 1000);
+    lastFrame = now;
 
-    engineRunning = true;
-    let last = performance.now();
+    if (currentView === "organism" && !paused && !organizing &&
+        !gesture && !document.hidden &&
+        Date.now() - lastInteraction > 700 &&
+        now - lastPaint > 30) {
+      step((now - lastPaint) / 1000 || dt);
+      paintPositions();
+      lastPaint = now;
+    }
 
-    function tick(now) {
-      if (!engineRunning) return;
+    if (!document.hidden && Date.now() - lastAgeRefresh > 60000) {
+      lastAgeRefresh = Date.now();
+      refresh();
+    }
 
-      const dt = Math.min(0.05, (now - last) / 1000);
-      last = now;
+    requestAnimationFrame(tick);
+  }
 
-      if (!paused &&
-          Date.now() - lastInteraction > 700 &&
-          !document.hidden) {
-        step(dt);
+  function switchView(view) {
+    currentView = view;
+    updateControls();
+    $("listView").classList.toggle("active", view === "list");
+    $("organismWrap").classList.toggle("active", view === "organism");
+
+    for (const [id, active] of [
+      ["toListBtn", view === "list"],
+      ["toOrgBtn", view === "organism"]
+    ]) {
+      $(id).classList.toggle("active", active);
+      $(id).setAttribute("aria-pressed", String(active));
+    }
+
+    if (view === "organism") {
+      requestAnimationFrame(() => {
+        resizeViewport();
         renderOrganism();
-      }
-
-      rafId = requestAnimationFrame(tick);
+      });
+    } else {
+      renderList();
+      persist();
     }
-
-    rafId = requestAnimationFrame(tick);
-
-    autosaveTimer = setInterval(
-      () => Store.save(),
-      3000
-    );
   }
 
-  function stopEngine() {
-    engineRunning = false;
+  $("toListBtn").addEventListener("click", () => switchView("list"));
+  $("toOrgBtn").addEventListener("click", () => switchView("organism"));
 
-    if (rafId !== null) {
-      cancelAnimationFrame(rafId);
-    }
-
-    if (autosaveTimer !== null) {
-      clearInterval(autosaveTimer);
-    }
-
-    rafId = null;
-    autosaveTimer = null;
-    Store.save();
-  }
-
-  $("pauseBtn").addEventListener("click", () => {
-    paused = !paused;
-
-    $("pauseBtn").classList.toggle(
-      "paused",
-      paused
-    );
-
-    $("pauseBtn").classList.toggle(
-      "running",
-      !paused
-    );
-
-    $("pauseBtn").textContent =
-      paused ? "▶" : "⏸";
-
-    $("pauseBtn").title =
-      paused ? "Retomar animação" : "Pausar animação";
-
-    $("pauseBtn").setAttribute(
-      "aria-label",
-      paused ? "Retomar animação" : "Pausar animação"
-    );
-  });
-
-  function updateSpeed(change) {
-    speed = Math.max(
-      0.2,
-      Math.min(
-        3,
-        Math.round((speed + change) * 10) / 10
-      )
-    );
-
-    $("speedLabel").textContent =
-      speed.toFixed(1).replace(".", ",") + "×";
-  }
-
-  $("speedUp").addEventListener(
-    "click",
-    () => updateSpeed(0.2)
-  );
-
-  $("speedDown").addEventListener(
-    "click",
-    () => updateSpeed(-0.2)
-  );
-
-  $("exportBtn").addEventListener("click", () => {
-    const blob = new Blob(
-      [Store.exportData()],
-      { type: "application/json" }
-    );
-
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-
-    const stamp = new Date()
-      .toISOString()
-      .slice(0, 19)
-      .replace(/[:T]/g, "-");
-
-    link.href = url;
-    link.download =
-      `organismo-de-tarefas-${stamp}.json`;
-
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-
-    setTimeout(
-      () => URL.revokeObjectURL(url),
-      1000
-    );
-
-    toast("Tarefas exportadas.");
-  });
-
-  function refreshAfterReplacement() {
-    runtime.clear();
-    clearConnection();
-
-    if (lastTap) {
-      clearTimeout(lastTap.timer);
-    }
-
-    lastTap = null;
+  function refresh() {
+    const visibleIds = new Set(visibleActive().map(task => task.id));
+    [...selected].forEach(id => {
+      if (!visibleIds.has(id)) selected.delete(id);
+    });
 
     renderList();
     renderHistory();
+    renderOrganism();
+    updateControls();
+    checkStorage();
+  }
 
-    if (currentView === "organism") {
-      renderOrganism();
+  for (const id of [
+    "filterSearch", "filterType", "filterUrgency", "filterStatus"
+  ]) {
+    $(id).addEventListener(id === "filterSearch" ? "input" : "change",
+      refresh);
+  }
+
+  $("clearFilters").addEventListener("click", () => {
+    $("filterSearch").value = "";
+    $("filterType").value = "";
+    $("filterUrgency").value = "";
+    $("filterStatus").value = "active";
+    refresh();
+  });
+
+  function setHistory(open) {
+    $("historyPanel").classList.toggle("open", open);
+    $("historyPanel").inert = !open;
+
+    if (open) {
+      renderHistory();
+      $("historyClose").focus();
+    } else {
+      $("historyToggle").focus();
     }
   }
 
-  const importFile = $("importFile");
+  $("historyToggle").addEventListener("click", () => setHistory(true));
+  $("historyClose").addEventListener("click", () => setHistory(false));
 
-  $("importBtn").addEventListener(
-    "click",
-    () => importFile.click()
-  );
+  $("exportBtn").addEventListener("click", () => {
+    const blob = new Blob([Store.exportData()], {
+      type: "application/json"
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `organismo-de-tarefas-${today()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("Backup completo exportado, incluindo datas e memória de posições.");
+  });
 
-  importFile.addEventListener("change", async () => {
-    const file = importFile.files?.[0];
+  $("importBtn").addEventListener("click", () => $("importFile").click());
+
+  $("importFile").addEventListener("change", async () => {
+    const file = $("importFile").files?.[0];
     if (!file) return;
 
-    if (!confirm(
-      "Importar substituirá todas as tarefas atuais. Deseja continuar?"
-    )) {
-      importFile.value = "";
-      return;
-    }
-
     try {
-      const result =
-        Store.importData(await file.text());
+      if (!confirm(
+        "Adicionar as tarefas novas deste arquivo? Tarefas com IDs já existentes não serão alteradas."
+      )) return;
+
+      const result = Store.importData(await file.text());
 
       if (!result.ok) {
-        toast(
-          result.reason === "parse"
-            ? "Arquivo inválido: JSON ilegível."
-            : "Formato inesperado de arquivo.",
-          "err"
-        );
-      } else {
-        refreshAfterReplacement();
-        toast("Tarefas importadas.");
+        toast(result.reason === "parse"
+          ? "O arquivo não contém um JSON válido."
+          : "O arquivo não está no formato de tarefas esperado.", "error");
+        return;
       }
-    } catch {
+
+      runtime.clear();
+      refresh();
+
       toast(
-        "Não foi possível ler o arquivo.",
-        "err"
+        `${result.added} adicionada(s), ${result.skipped} já existente(s).` +
+        (result.ignoredLinks
+          ? ` ${result.ignoredLinks} vínculo(s) inválido(s) ou indisponível(is) ignorado(s).`
+          : "")
       );
+
+      if (!result.persisted) checkStorage();
+    } catch {
+      toast("Não foi possível processar esse arquivo.", "error");
     } finally {
-      importFile.value = "";
+      $("importFile").value = "";
     }
   });
 
   $("resetBtn").addEventListener("click", () => {
     if (!confirm(
-      "Isto apagará todas as tarefas e o histórico. Deseja continuar?"
-    )) {
-      return;
-    }
+      "Apagar todas as tarefas, o histórico e a memória de posições? Exporte um backup antes."
+    )) return;
 
     Store.resetAll();
-    refreshAfterReplacement();
-    toast("Tarefas apagadas.");
+    selected.clear();
+    runtime.clear();
+    refresh();
+    toast("Dados apagados.");
   });
 
   document.addEventListener("keydown", event => {
-    if (event.key !== "Escape") return;
+    if (event.key !== "Escape" ||
+        $("taskDialog").open || $("dependencyDialog").open) return;
 
-    if (overlay.classList.contains("open")) {
-      closeModal();
-    } else if (pendingConnectId) {
-      clearConnection();
-      renderOrganism();
+    if ($("historyPanel").classList.contains("open")) {
+      setHistory(false);
     } else {
-      historyPanel.classList.remove("open");
+      selected.clear();
+      updateSelectionVisual();
     }
   });
 
-  document.addEventListener(
-    "visibilitychange",
-    () => {
-      if (document.hidden) {
-        Store.save();
-      }
-    }
-  );
+  if ("ResizeObserver" in window) {
+    new ResizeObserver(resizeViewport).observe($("canvasArea"));
+  } else {
+    window.addEventListener("resize", resizeViewport);
+  }
 
-  window.addEventListener(
-    "beforeunload",
-    () => Store.save()
-  );
+  setInterval(() => {
+    if (currentView === "organism" && !document.hidden) persist();
+  }, 5000);
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) persist();
+    else {
+      lastInteraction = Date.now();
+      refresh();
+    }
+  });
+
+  window.addEventListener("pagehide", persist);
+  window.addEventListener("beforeunload", persist);
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker
-        .register("./sw.js")
-        .catch(error => {
-          console.warn(
-            "Service worker não registrado:",
-            error
-          );
-        });
+      navigator.serviceWorker.register("./sw.js").catch(error => {
+        console.warn("Service worker não registrado:", error);
+      });
     });
   }
 
-  renderList();
-  renderHistory();
+  function setupCompactControls() {
+    const filters = document.querySelector(".filters");
+    const toolbar = document.querySelector(".organismToolbar");
+    const tools = $("organizeTools");
+
+    const strip = element("div", "controlStrip");
+    strip.id = "compactControlStrip";
+    const header = document.querySelector("#app > header");
+    const brand = header && header.querySelector(".brand");
+    if (!header || !brand) {
+      throw new Error("Cabeçalho do aplicativo não encontrado.");
+    }
+
+    header.classList.add("compactHeaderV2");
+    brand.after(filters);
+    header.after(strip);
+    strip.appendChild(toolbar);
+
+    const toolsMenu = element("details", "compactOrganizeMenu");
+    toolsMenu.id = "compactOrganizeMenu";
+    toolsMenu.hidden = true;
+
+    const summary = element("summary", "", "Ajustes ▾");
+    summary.title = "Seleção, alinhamento, distribuição e memória";
+    summary.setAttribute("aria-label",
+      "Ferramentas de seleção, alinhamento e distribuição");
+
+    toolsMenu.append(summary, tools);
+    toolbar.appendChild(toolsMenu);
+
+    const menus = [
+      $("compactFilterMenu"),
+      toolsMenu
+    ].filter(Boolean);
+
+    menus.forEach(menu => {
+      menu.addEventListener("toggle", () => {
+        if (menu.open) {
+          menus.forEach(other => {
+            if (other !== menu) other.open = false;
+          });
+        }
+      });
+    });
+
+    document.addEventListener("click", event => {
+      menus.forEach(menu => {
+        if (menu.open && !menu.contains(event.target)) {
+          menu.open = false;
+        }
+      });
+    });
+
+    document.addEventListener("keydown", event => {
+      if (event.key !== "Escape") return;
+
+      menus.forEach(menu => {
+        if (!menu.open) return;
+        menu.open = false;
+        menu.querySelector("summary").focus();
+      });
+    });
+
+    $("toListBtn").addEventListener("click", () => {
+      toolsMenu.open = false;
+    });
+  }
+
+  setupCompactControls();
+
+  refresh();
+  requestAnimationFrame(tick);
 })();

@@ -24,173 +24,285 @@
         <h1>Organismo de Tarefas</h1>
       </div>
 
-      <div class="lifeControls" aria-label="Controles do organismo">
-        <button id="pauseBtn" class="running" type="button" title="Pausar ou retomar" aria-label="Pausar animação">⏸</button>
-        <button id="speedDown" type="button" title="Diminuir velocidade" aria-label="Diminuir velocidade">−</button>
-        <span id="speedLabel" class="speedLabel">1,0×</span>
-        <button id="speedUp" type="button" title="Aumentar velocidade" aria-label="Aumentar velocidade">+</button>
-      </div>
-
-      <div class="viewToggle" aria-label="Visualização">
-        <button id="toListBtn" class="active" type="button">Lista</button>
-        <button id="toOrgBtn" type="button">Organismo</button>
-      </div>
+      <nav class="viewToggle" aria-label="Visualização">
+        <button id="toListBtn" class="active" type="button"
+          aria-pressed="true">Lista</button>
+        <button id="toOrgBtn" type="button"
+          aria-pressed="false">Organismo</button>
+      </nav>
 
       <div class="ioGroup">
-        <button class="btn ghost" id="exportBtn" type="button" title="Exportar tarefas em JSON">Exportar</button>
-        <button class="btn ghost" id="importBtn" type="button" title="Importar tarefas de um JSON">Importar</button>
-        <input type="file" id="importFile" accept=".json,application/json" hidden>
-        <button class="btn ghost danger" id="resetBtn" type="button" title="Apagar tarefas e histórico">Reset</button>
+        <button id="exportBtn" type="button">Exportar</button>
+        <button id="importBtn" type="button">Importar</button>
+        <input id="importFile" type="file"
+          accept=".json,application/json" hidden>
+        <button id="resetBtn" class="danger" type="button">Reset</button>
       </div>
 
-      <button class="btn newTaskBtn" id="newTaskBtn" type="button" title="Nova tarefa" aria-label="Nova tarefa">+</button>
+      <button id="newTaskBtn" class="primary" type="button">
+        + Nova tarefa
+      </button>
     </header>
 
-    <main>
-      <div id="listView" class="active">
-        <div class="treeRoot" id="treeRoot"></div>
-      </div>
+    <section class="filters" aria-label="Filtros de tarefas">
+      <label class="compactSearch" title="Buscar por nome ou descrição">
+        <span class="srOnly">Buscar</span>
+        <input id="filterSearch" type="search"
+          placeholder="Buscar tarefa…">
+      </label>
 
-      <div id="organismWrap">
-        <svg
-          id="organism"
-          viewBox="0 0 1 1"
-          preserveAspectRatio="none"
-          role="img"
-          aria-label="Visualização das tarefas como organismo"
-        >
-          <defs>
-            <radialGradient id="gradGreen" cx="35%" cy="30%" r="75%">
-              <stop offset="0%" stop-color="#d9fff5"/>
-              <stop offset="45%" stop-color="#4ee2c0"/>
-              <stop offset="100%" stop-color="#136a58"/>
-            </radialGradient>
+      <details id="compactFilterMenu" class="compactFilterMenu">
+        <summary title="Filtrar por tipo, urgência e situação">
+          Filtros ▾
+        </summary>
 
-            <radialGradient id="gradViolet" cx="35%" cy="30%" r="75%">
-              <stop offset="0%" stop-color="#efd9ff"/>
-              <stop offset="45%" stop-color="#b479ff"/>
-              <stop offset="100%" stop-color="#5a2f96"/>
-            </radialGradient>
+        <div class="filterOptions">
+          <label>
+            Tipo / forma
+            <select id="filterType">
+              <option value="">Todos os tipos</option>
+              <option value="pessoal">Pessoal · círculo</option>
+              <option value="terceiros">Terceiros · quadrado</option>
+              <option value="familia">Família · losango</option>
+              <option value="trabalho">Trabalho · hexágono</option>
+            </select>
+          </label>
 
-            <radialGradient id="gradBlue" cx="35%" cy="30%" r="75%">
-              <stop offset="0%" stop-color="#d6ecff"/>
-              <stop offset="45%" stop-color="#5ba8ff"/>
-              <stop offset="100%" stop-color="#20477f"/>
-            </radialGradient>
+          <label>
+            Urgência
+            <select id="filterUrgency">
+              <option value="">Todas</option>
+              <option value="1">1 · Máxima · 7 dias</option>
+              <option value="2">2 · Alta · 15 dias</option>
+              <option value="3">3 · Média · 30 dias</option>
+              <option value="4">4 · Baixa · 90 dias</option>
+              <option value="5">5 · Mínima · 180 dias</option>
+            </select>
+          </label>
 
-            <radialGradient id="gradOrange" cx="35%" cy="30%" r="75%">
-              <stop offset="0%" stop-color="#ffe8ba"/>
-              <stop offset="45%" stop-color="#ff9d43"/>
-              <stop offset="100%" stop-color="#ae3e26"/>
-            </radialGradient>
+          <label>
+            Situação
+            <select id="filterStatus">
+              <option value="active">Ativas</option>
+              <option value="all">Todas</option>
+              <option value="alert">Em alerta máximo</option>
+              <option value="completed">Concluídas</option>
+            </select>
+          </label>
 
-            <radialGradient id="gradSediment" cx="35%" cy="25%" r="80%">
-              <stop offset="0%" stop-color="#ffe1a9"/>
-              <stop offset="50%" stop-color="#d7a568"/>
-              <stop offset="100%" stop-color="#67492e"/>
-            </radialGradient>
-
-            <linearGradient id="gradConn" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="#4ee2c0" stop-opacity=".75"/>
-              <stop offset="100%" stop-color="#b479ff" stop-opacity=".75"/>
-            </linearGradient>
-
-            <linearGradient id="gradFloor" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stop-color="#1a1220" stop-opacity="0"/>
-              <stop offset="100%" stop-color="#241708" stop-opacity=".55"/>
-            </linearGradient>
-
-            <filter id="membraneGlow" x="-60%" y="-60%" width="220%" height="220%">
-              <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
-              <feColorMatrix
-                in="blur"
-                type="matrix"
-                values="
-                  0 0 0 0 0.20
-                  0 0 0 0 0.95
-                  0 0 0 0 0.78
-                  0 0 0 0.55 0
-                "
-                result="glow"
-              />
-              <feMerge>
-                <feMergeNode in="glow"/>
-                <feMergeNode in="SourceGraphic"/>
-              </feMerge>
-            </filter>
-          </defs>
-
-          <g id="camera"></g>
-        </svg>
-
-        <div class="hintBar" id="hintBar" role="status"></div>
-
-        <div class="zoomCtl">
-          <button id="zoomIn" type="button" aria-label="Aumentar zoom">+</button>
-          <button id="zoomReset" type="button" aria-label="Enquadrar organismo">⟳</button>
-          <button id="zoomOut" type="button" aria-label="Diminuir zoom">−</button>
+          <button id="clearFilters" type="button">Limpar filtros</button>
         </div>
-      </div>
+      </details>
 
-      <button class="btn ghost" id="historyToggle" type="button">Histórico</button>
+      <span id="filterCount" role="status"></span>
+    </section>
 
-      <div id="historyPanel" aria-label="Histórico de tarefas concluídas">
+    <main>
+      <section id="listView" class="active"
+        aria-label="Lista de tarefas">
+        <p class="viewHelp">
+          Clique no nome para detalhes; ✓ conclui; ⋯ reúne as demais ações.
+        </p>
+        <div id="treeRoot"></div>
+      </section>
+
+      <section id="organismWrap" aria-label="Organismo de tarefas">
+        <div class="organismToolbar">
+          <button id="organizeBtn" type="button" title="Organizar células visíveis em grade">Organizar</button>
+          <button id="resumeBtn" type="button" title="Sair da organização e retomar o movimento" aria-label="Sair da organização e retomar o movimento">▶ Livre</button>
+
+          <div class="lifeControls" aria-label="Movimento">
+            <button id="pauseBtn" type="button"
+              aria-label="Pausar movimento">Pausar</button>
+            <button id="speedDown" type="button"
+              aria-label="Diminuir velocidade">−</button>
+            <span id="speedLabel">1,0×</span>
+            <button id="speedUp" type="button"
+              aria-label="Aumentar velocidade">+</button>
+          </div>
+
+          <button id="restoreLayoutBtn" type="button" title="Restaurar memória de posições" aria-label="Restaurar memória de posições">↶ Memória</button>
+        </div>
+
+        <div id="organizeTools" hidden>
+          <span id="selectedCount">0 selecionadas</span>
+          <button id="selectAllBtn" type="button" title="Selecionar todas as tarefas ativas visíveis">Todas</button>
+          <button id="clearSelectionBtn" type="button" title="Limpar seleção">Limpar</button>
+
+          <label>
+            Alinhar
+            <select id="alignChoice">
+              <option value="left">À esquerda</option>
+              <option value="centerX">Centro horizontal</option>
+              <option value="right">À direita</option>
+              <option value="top">Ao topo</option>
+              <option value="centerY">Centro vertical</option>
+              <option value="bottom">À base</option>
+            </select>
+          </label>
+
+          <button id="alignBtn" type="button" title="Aplicar alinhamento escolhido">Alinhar</button>
+          <button id="distributeXBtn" type="button" title="Distribuir horizontalmente" aria-label="Distribuir horizontalmente">↔ Distribuir</button>
+          <button id="distributeYBtn" type="button" title="Distribuir verticalmente" aria-label="Distribuir verticalmente">↕ Distribuir</button>
+          <button id="saveLayoutBtn" class="primary" type="button">
+            Salvar memória
+          </button>
+        </div>
+
+        <div id="canvasArea">
+          <svg id="organism" viewBox="0 0 1200 800"
+            preserveAspectRatio="none"
+            role="img"
+            aria-label="Tarefas representadas por células. Use a Lista para editar ou concluir.">
+            <defs>
+              <radialGradient id="cellLight" cx="32%" cy="25%" r="80%">
+                <stop offset="0%" stop-color="white" stop-opacity=".65"/>
+                <stop offset="45%" stop-color="white" stop-opacity=".07"/>
+                <stop offset="100%" stop-color="black" stop-opacity=".4"/>
+              </radialGradient>
+
+              <radialGradient id="sedimentLight">
+                <stop offset="0%" stop-color="#ffe1a9"/>
+                <stop offset="100%" stop-color="#67492e"/>
+              </radialGradient>
+
+              <linearGradient id="floorLight" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#241708" stop-opacity="0"/>
+                <stop offset="100%" stop-color="#241708" stop-opacity=".7"/>
+              </linearGradient>
+            </defs>
+            <g id="camera"></g>
+          </svg>
+
+          <div id="hintBar" role="status"></div>
+
+          <div class="zoomCtl" aria-label="Zoom">
+            <button id="zoomIn" type="button"
+              aria-label="Aumentar zoom">+</button>
+            <button id="zoomReset" type="button"
+              aria-label="Restaurar enquadramento">⟳</button>
+            <button id="zoomOut" type="button"
+              aria-label="Diminuir zoom">−</button>
+          </div>
+
+          <div class="visualLegend">
+            Núcleo verde vivo: pronta para resolução. Cor externa/tamanho: envelhecimento.
+            Círculo: pessoal · quadrado: terceiros · losango: família · hexágono: trabalho.
+            O prazo depende da urgência, não é uma data de vencimento.
+          </div>
+        </div>
+      </section>
+
+      <button id="historyToggle" type="button">Histórico</button>
+
+      <aside id="historyPanel" aria-label="Histórico" inert>
         <div class="hHead">
-          <h3>Sedimento resolvido</h3>
-          <button id="historyClose" type="button" aria-label="Fechar histórico">✕</button>
+          <h2>Sedimento resolvido</h2>
+          <button id="historyClose" type="button"
+            aria-label="Fechar histórico">✕</button>
         </div>
         <div id="historyList"></div>
-      </div>
+      </aside>
     </main>
   </div>
 
-  <div id="overlay">
-    <form id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <dialog id="taskDialog">
+    <form id="taskForm">
       <h2 id="modalTitle">Nova tarefa</h2>
-      <p class="hint" id="modalHint"></p>
 
-      <div class="field">
-        <label for="fieldKeyword">Palavra-chave *</label>
-        <div class="keywordRow">
-          <input
-            type="text"
-            id="fieldKeyword"
-            maxlength="60"
-            required
-            autocomplete="off"
-            placeholder="Nome da tarefa"
-          >
-          <button class="btn" id="modalSave" type="submit">Salvar</button>
-        </div>
-      </div>
+      <label>
+        Palavra-chave *
+        <input id="fieldKeyword" type="text"
+          maxlength="120" required autocomplete="off">
+      </label>
 
-      <div class="field">
-        <label for="fieldType">Tipo</label>
+      <label>
+        Data inicial *
+        <input id="fieldStartDate" type="date" required>
+      </label>
+
+      <p class="fieldHelp">
+        Pode ser retroativa. A idade visual é calculada a partir desta data.
+      </p>
+
+      <label>
+        Urgência
+        <select id="fieldUrgency">
+          <option value="1">1 · Máxima — alerta em 7 dias</option>
+          <option value="2">2 · Alta — alerta em 15 dias</option>
+          <option value="3">3 · Média — alerta em 30 dias</option>
+          <option value="4">4 · Baixa — alerta em 90 dias</option>
+          <option value="5">5 · Mínima — alerta em 180 dias</option>
+        </select>
+      </label>
+
+      <label>
+        Tipo
         <select id="fieldType">
           <option value="pessoal">Pessoal · círculo</option>
           <option value="terceiros">Terceiros · quadrado</option>
-          <option value="familia">Família · losongo</option>
+          <option value="familia">Família · losango</option>
           <option value="trabalho">Trabalho · hexágono</option>
         </select>
-      </div>
+      </label>
 
-      <div class="field">
-        <label for="fieldDesc">Descrição (opcional)</label>
-        <textarea id="fieldDesc" maxlength="600" placeholder="Detalhes adicionais…"></textarea>
-      </div>
+      <label>
+        Descrição
+        <textarea id="fieldDesc" maxlength="600" rows="3"></textarea>
+      </label>
 
-      <div class="field" id="prereqField">
-        <label for="fieldPrereq">Vincular como pré-requisito de</label>
-        <select id="fieldPrereq">
-          <option value="">Nenhum (tarefa raiz)</option>
-        </select>
-      </div>
+      <fieldset id="relationFields">
+        <legend>Dependência opcional</legend>
+
+        <label>
+          A nova tarefa será
+          <select id="fieldRelation">
+            <option value="">Isolada</option>
+            <option value="prerequisite">Pré-requisito da tarefa abaixo</option>
+            <option value="dependent">Dependente da tarefa abaixo</option>
+          </select>
+        </label>
+
+        <label>
+          Tarefa existente
+          <select id="fieldTarget"></select>
+        </label>
+      </fieldset>
 
       <div class="modalActions">
-        <button class="btn ghost" id="modalCancel" type="button">Cancelar</button>
+        <button id="modalCancel" type="button">Cancelar</button>
+        <button class="primary" type="submit">Salvar tarefa</button>
       </div>
     </form>
-  </div>
+  </dialog>
+
+  <dialog id="dependencyDialog">
+    <form id="dependencyForm">
+      <h2>Gerenciar dependências</h2>
+      <p id="dependencyTitle"></p>
+
+      <h3>Pré-requisitos atuais</h3>
+      <div id="dependencyList"></div>
+
+      <label>
+        Adicionar tarefa existente como
+        <select id="dependencyRelation">
+          <option value="prerequisite">Pré-requisito</option>
+          <option value="dependent">Dependente</option>
+        </select>
+      </label>
+
+      <label>
+        Tarefa
+        <select id="dependencyTarget"></select>
+      </label>
+
+      <div class="modalActions">
+        <button id="dependencyClose" type="button">Fechar</button>
+        <button class="primary" type="submit">Adicionar vínculo</button>
+      </div>
+    </form>
+  </dialog>
 
   <div id="toasts" role="status" aria-live="polite"></div>
 
