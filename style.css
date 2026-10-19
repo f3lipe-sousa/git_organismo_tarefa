@@ -1348,3 +1348,25 @@ legend {
     min-height: 32px;
   }
 }
+/* CORRECAO_LISTA_GRID_V3
+   Acrescente ao final de style.css.
+   Mantém o conteúdo na linha que ocupa o espaço disponível,
+   mesmo quando a faixa de controles está oculta na Lista.
+*/
+
+#app > header {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+#app > #compactControlStrip {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+#app > main {
+  grid-column: 1;
+  grid-row: 3;
+  min-width: 0;
+  min-height: 0;
+}
