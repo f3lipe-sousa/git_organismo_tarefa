@@ -1370,3 +1370,79 @@ legend {
   min-width: 0;
   min-height: 0;
 }
+
+
+/* ORGANISMO_MELHORIAS_V4 */
+#treeRoot .card.compactCard.selectedTask {
+  border-color: var(--cyan);
+  background: linear-gradient(150deg, #173a38, var(--panel));
+  box-shadow: inset 3px 0 0 var(--cyan), 0 0 0 1px #4ee2c033;
+}
+#treeRoot .selectedTask .taskTitleButton {
+  color: #d9fff5;
+}
+.typeFilterGroup {
+  flex: 1 1 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 10px;
+}
+.typeFilterGroup legend {
+  padding: 0 5px;
+  color: var(--text);
+  font-size: 12px;
+}
+.typeFilterHint {
+  margin: 0 0 8px;
+  color: var(--dim);
+  font-size: 11px;
+}
+.compactHeaderV2 .typeFilterGroup > label.typeFilterOption {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 12px 4px 0;
+  cursor: pointer;
+}
+.typeFilterOption input {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--cyan);
+}
+.typePickerOptions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.typePickerOptions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 58px;
+  font-size: 14px;
+}
+.typePickerOptions svg {
+  flex: none;
+  color: var(--cyan);
+}
+#organizeTools .symbolToolButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  min-height: 36px;
+  padding: 5px;
+}
+#organizeTools #alignChoice {
+  min-width: 60px;
+  min-height: 36px;
+  font-size: 20px;
+  text-align: center;
+}
+@media (max-width: 360px) {
+  .typePickerOptions { grid-template-columns: 1fr; }
+}

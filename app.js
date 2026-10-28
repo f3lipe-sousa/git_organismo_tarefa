@@ -1,3 +1,4 @@
+/* ORGANISMO_MELHORIAS_V4 */
 /* ORGANISMO_COMPACTO_V2 */
 /* ORGANISMO_COMPACTO_V1 */
 (function () {
@@ -25,6 +26,7 @@
   let lastPaint = 0;
   let lastAgeRefresh = Date.now();
   let storageWarningShown = false;
+  let focusedTaskId = null;
 
   const selected = new Set();
   const runtime = new Map();
@@ -86,14 +88,15 @@
   function matches(task) {
     const search = $("filterSearch").value.trim()
       .toLocaleLowerCase("pt-BR");
-    const type = $("filterType").value;
+    const types = [...$("filterType").selectedOptions]
+      .map(option => option.value).filter(Boolean);
     const urgency = $("filterUrgency").value;
     const status = $("filterStatus").value;
 
     if (search && !`${task.keyword} ${task.description}`
         .toLocaleLowerCase("pt-BR").includes(search)) return false;
 
-    if (type && task.type !== type) return false;
+    if (types.length && !types.includes(task.type)) return false;
     if (urgency && task.urgency !== Number(urgency)) return false;
     if (status === "active" && task.completed) return false;
     if (status === "completed" && !task.completed) return false;
@@ -246,6 +249,9 @@
         (visual.alert ? " alert" : "") +
         (ready ? " ready" : "")
     );
+
+    card.dataset.taskId = task.id;
+    card.classList.toggle("selectedTask", selected.has(task.id));
 
     if (context) {
       card.title =
@@ -453,7 +459,7 @@
     const task = state.mode === "edit" ? Store.get(state.id) : null;
     if (state.mode === "edit" && (!task || task.completed)) return;
 
-    modalState = { ...state, typeTouched: false };
+    modalState = { ...state, typeTouched: !!state.type };
     $("modalTitle").textContent = task ? "Editar tarefa" : "Nova tarefa";
     $("fieldKeyword").value = task?.keyword || "";
     $("fieldDesc").value = task?.description || "";
@@ -461,7 +467,7 @@
       ? Store.get(state.targetId)
       : null;
 
-    $("fieldType").value = task?.type || origin?.type || "pessoal";
+    $("fieldType").value = task?.type || state.type || origin?.type || "pessoal";
     $("fieldUrgency").value = String(task?.urgency || 3);
     $("fieldStartDate").value = task?.startDate || today();
     $("fieldStartDate").max = today();
@@ -494,8 +500,7 @@
   $("fieldType").addEventListener("change", () => {
     if (modalState) modalState.typeTouched = true;
   });
-  $("newTaskBtn").addEventListener("click", () =>
-    openTaskModal({ mode: "create" }));
+  $("newTaskBtn").addEventListener("click", openTypePicker);
   $("modalCancel").addEventListener("click", () =>
     $("taskDialog").close());
   $("taskDialog").addEventListener("close", () => {
@@ -867,6 +872,7 @@
   function updateSelectionVisual() {
     nodes.forEach((node, id) =>
       node.classList.toggle("selected", selected.has(id)));
+    renderList();
     updateControls();
   }
 
@@ -879,9 +885,9 @@
     const task = node ? Store.get(node.dataset.id) : null;
     const start = point(event);
 
-    if (task && !task.completed) {
-      const dragIds = organizing && selected.has(task.id)
-        ? [...selected]
+    if (task) {
+      const dragIds = task.completed ? [] : organizing && selected.has(task.id)
+        ? selectedTasks().map(item => item.id)
         : [task.id];
 
       const origins = dragIds.map(id => {
@@ -957,11 +963,20 @@
       svg.releasePointerCapture(event.pointerId);
     }
 
-    if (!cancelled && !previous.moved &&
-        previous.kind === "node" && organizing) {
-      if (selected.has(previous.id)) selected.delete(previous.id);
-      else selected.add(previous.id);
-      updateSelectionVisual();
+    if (!cancelled && !previous.moved && previous.kind === "node") {
+      const task = Store.get(previous.id);
+      if (task) {
+        if (organizing && !task.completed) {
+          if (selected.has(task.id)) selected.delete(task.id);
+          else selected.add(task.id);
+        } else {
+          selected.clear();
+          selected.add(task.id);
+        }
+        focusedTaskId = selected.has(task.id)
+          ? task.id : [...selected].at(-1) || null;
+        updateSelectionVisual();
+      }
     }
 
     if (previous.moved) persist();
@@ -1000,53 +1015,108 @@
     $("pauseBtn").setAttribute("aria-label",
       paused ? "Retomar movimento" : "Pausar movimento");
     $("restoreLayoutBtn").disabled = !Store.hasLayout();
-    $("alignBtn").disabled = selected.size < 2;
-    $("distributeXBtn").disabled = selected.size < 3;
-    $("distributeYBtn").disabled = selected.size < 3;
+    const editableSelectionCount = selectedTasks().length;
+    $("alignBtn").disabled = editableSelectionCount < 2;
+    $("distributeXBtn").disabled = editableSelectionCount < 3;
+    $("distributeYBtn").disabled = editableSelectionCount < 3;
 
     $("hintBar").textContent = organizing
       ? "Toque para selecionar ou desmarcar. Arraste para mover. As ferramentas atuam só nas selecionadas."
       : paused
         ? "Movimento pausado. Arraste as células ou use Organizar."
-        : "Arraste para posicionar. Edição, dependências e conclusão ficam na Lista.";
+        : "Clique para destacar na Lista; arraste para posicionar. Edição e conclusão ficam na Lista.";
   }
 
   function autoOrganize() {
     organizing = true;
     paused = true;
     selected.clear();
+    focusedTaskId = null;
     runtime.clear();
     updateControls();
     resizeViewport();
+    fitCamera();
 
-    const tasks = visibleActive().sort((a, b) =>
-      a.keyword.localeCompare(b.keyword, "pt-BR"));
+    const groups = Object.keys(TYPES).map(type => ({
+      type,
+      tasks: visibleActive().filter(task => task.type === type)
+        .sort((a, b) => a.keyword.localeCompare(b.keyword, "pt-BR"))
+    })).filter(group => group.tasks.length);
 
-    if (!tasks.length) {
+    if (!groups.length) {
       renderOrganism();
       toast("Não há células ativas visíveis para organizar.", "warn");
       return;
     }
 
-    const columns = Math.max(1, Math.min(
-      tasks.length,
-      Math.ceil(Math.sqrt(tasks.length * WORLD.w / WORLD.h))
-    ));
-    const rows = Math.ceil(tasks.length / columns);
+    let crowded = false;
 
-    tasks.forEach((task, index) => {
-      const column = index % columns;
-      const row = Math.floor(index / columns);
-      Store.updatePosition(
-        task.id,
-        (column + .5) * WORLD.w / columns,
-        (row + .5) * WORLD.h / rows
-      );
-    });
+    function positionGroup(group, box) {
+      const inset = 10;
+      const width = Math.max(1, box.w - inset * 2);
+      const height = Math.max(1, box.h - inset * 2);
+      const count = group.tasks.length;
+      const columns = Math.max(1, Math.min(count,
+        Math.ceil(Math.sqrt(count * width / height))));
+      const rows = Math.ceil(count / columns);
+      const maxRadius = Math.max(...group.tasks.map(task => appearance(task).radius));
+      if (width / columns < maxRadius * 2 + 12 ||
+          height / rows < maxRadius * 2 + 44) crowded = true;
+
+      group.tasks.forEach((task, index) => {
+        Store.updatePosition(task.id,
+          box.x + inset + (index % columns + .5) * width / columns,
+          box.y + inset + (Math.floor(index / columns) + .5) * height / rows);
+      });
+    }
+
+    // Divide a tela em regiões contíguas, proporcionais ao tamanho dos grupos.
+    function partition(items, box) {
+      if (items.length === 1) {
+        positionGroup(items[0], box);
+        return;
+      }
+      const total = items.reduce((sum, group) => sum + group.tasks.length, 0);
+      let split = 1;
+      let best = Infinity;
+      let accumulated = 0;
+      for (let i = 1; i < items.length; i++) {
+        accumulated += items[i - 1].tasks.length;
+        const distance = Math.abs(total / 2 - accumulated);
+        if (distance < best) {
+          best = distance;
+          split = i;
+        }
+      }
+      const first = items.slice(0, split);
+      const second = items.slice(split);
+      const fraction = first.reduce((sum, group) =>
+        sum + group.tasks.length, 0) / total;
+      if (box.w >= box.h) {
+        const width = box.w * fraction;
+        partition(first, { x: box.x, y: box.y, w: width, h: box.h });
+        partition(second, { x: box.x + width, y: box.y,
+          w: box.w - width, h: box.h });
+      } else {
+        const height = box.h * fraction;
+        partition(first, { x: box.x, y: box.y, w: box.w, h: height });
+        partition(second, { x: box.x, y: box.y + height,
+          w: box.w, h: box.h - height });
+      }
+    }
+
+    const hasSediment = visibleTasks().some(task => task.completed);
+    const top = Math.min(44, WORLD.h * .1);
+    const bottom = hasSediment ? WORLD.h * .76 : WORLD.h - 20;
+    partition(groups, { x: 0, y: top, w: WORLD.w,
+      h: Math.max(1, bottom - top) });
 
     persist();
     renderOrganism();
-    toast("Células visíveis organizadas. Selecione as que deseja ajustar.");
+    toast(crowded
+      ? "Agrupadas por tipo. Há pouco espaço: use filtros ou ajuste as posições."
+      : "Células agrupadas por tipo; ordem alfabética dentro de cada grupo.",
+      crowded ? "warn" : "");
   }
 
   function selectedTasks() {
@@ -1327,6 +1397,7 @@
       });
     } else {
       renderList();
+      requestAnimationFrame(revealSelectedTask);
       persist();
     }
   }
@@ -1335,7 +1406,7 @@
   $("toOrgBtn").addEventListener("click", () => switchView("organism"));
 
   function refresh() {
-    const visibleIds = new Set(visibleActive().map(task => task.id));
+    const visibleIds = new Set(visibleTasks().map(task => task.id));
     [...selected].forEach(id => {
       if (!visibleIds.has(id)) selected.delete(id);
     });
@@ -1356,7 +1427,10 @@
 
   $("clearFilters").addEventListener("click", () => {
     $("filterSearch").value = "";
-    $("filterType").value = "";
+    for (const option of $("filterType").options) option.selected = false;
+    document.querySelectorAll(".typeFilterCheckbox").forEach(input => {
+      input.checked = false;
+    });
     $("filterUrgency").value = "";
     $("filterStatus").value = "active";
     refresh();
@@ -1551,7 +1625,145 @@
     });
   }
 
+
+  function openTypePicker() {
+    const dialog = element("dialog", "typePickerDialog");
+    const heading = element("h2", "", "Qual tipo de tarefa?");
+    heading.id = "typePickerTitle";
+    dialog.setAttribute("aria-labelledby", heading.id);
+    const options = element("div", "typePickerOptions");
+    Object.entries(TYPES).forEach(([type, name]) => {
+      const button = action(name, () => {
+        dialog.close();
+        openTaskModal({ mode: "create", type });
+      });
+      const icon = svgElement("svg", {
+        viewBox: "-12 -12 24 24", width: 24, height: 24,
+        "aria-hidden": "true", focusable: "false"
+      });
+      const outline = shape(type, 8);
+      outline.setAttribute("fill", "none");
+      outline.setAttribute("stroke", "currentColor");
+      outline.setAttribute("stroke-width", "1.6");
+      icon.appendChild(outline);
+      button.prepend(icon);
+      options.appendChild(button);
+    });
+    const footer = element("div", "modalActions");
+    footer.appendChild(action("Cancelar", () => dialog.close()));
+    dialog.append(heading, options, footer);
+    document.body.appendChild(dialog);
+    let chosen = false;
+    options.addEventListener("click", event => {
+      if (event.target.closest("button")) chosen = true;
+    }, true);
+    dialog.addEventListener("close", () => {
+      dialog.remove();
+      if (!chosen) $("newTaskBtn").focus();
+    }, { once: true });
+    dialog.showModal();
+    options.querySelector("button").focus();
+  }
+
+  function revealSelectedTask() {
+    if (currentView !== "list" || !selected.size) return;
+    const cards = [...$("treeRoot").querySelectorAll(".compactCard")];
+    const card = cards.find(item =>
+      item.dataset.taskId === focusedTaskId && selected.has(focusedTaskId)) ||
+      cards.find(item => selected.has(item.dataset.taskId));
+    if (!card) return;
+    const viewport = $("listView");
+    const cardRect = card.getBoundingClientRect();
+    const viewportRect = viewport.getBoundingClientRect();
+    viewport.scrollTop += cardRect.top - viewportRect.top -
+      Math.max(8, (viewport.clientHeight - cardRect.height) / 2);
+    const title = card.querySelector(".taskTitleButton");
+    if (title) title.focus({ preventScroll: true });
+  }
+
+  function setupEnhancements() {
+    const select = $("filterType");
+    const fieldset = element("fieldset", "typeFilterGroup");
+    fieldset.appendChild(element("legend", "", "Tipo / forma"));
+    const hint = element("p", "typeFilterHint",
+      "Marque um ou mais. Sem marcação: todos os tipos.");
+    fieldset.appendChild(hint);
+    Object.entries(TYPES).forEach(([type, name]) => {
+      const label = element("label", "typeFilterOption");
+      const input = element("input", "typeFilterCheckbox");
+      input.type = "checkbox";
+      input.value = type;
+      input.checked = [...select.selectedOptions].some(option => option.value === type);
+      input.addEventListener("change", () => {
+        for (const option of select.options) {
+          if (option.value === type) option.selected = input.checked;
+        }
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      label.append(input, element("span", "", name));
+      fieldset.appendChild(label);
+    });
+    select.parentElement.replaceWith(fieldset);
+    select.hidden = true;
+    fieldset.appendChild(select);
+
+    const symbols = {
+      left: ["⇤", "Alinhar à esquerda"],
+      centerX: ["↔", "Alinhar ao centro horizontal"],
+      right: ["⇥", "Alinhar à direita"],
+      top: ["⤒", "Alinhar ao topo"],
+      centerY: ["↕", "Alinhar ao centro vertical"],
+      bottom: ["⤓", "Alinhar à base"]
+    };
+    const choice = $("alignChoice");
+    const choiceLabel = choice.parentElement;
+    [...choiceLabel.childNodes].filter(node => node.nodeType === 3)
+      .forEach(node => node.textContent = "");
+    choice.setAttribute("aria-label", "Direção do alinhamento");
+    for (const option of choice.options) {
+      const entry = symbols[option.value];
+      if (entry) {
+        option.textContent = entry[0];
+        option.title = entry[1];
+        option.setAttribute("aria-label", entry[1]);
+      }
+    }
+    const updateChoiceTitle = () => {
+      choice.title = symbols[choice.value][1];
+    };
+    choice.addEventListener("change", updateChoiceTitle);
+    updateChoiceTitle();
+
+    function iconButton(id, path, label) {
+      const button = $(id);
+      button.replaceChildren();
+      button.classList.add("symbolToolButton");
+      button.title = label;
+      button.setAttribute("aria-label", label);
+      const icon = svgElement("svg", {
+        viewBox: "0 0 24 24", width: 20, height: 20,
+        "aria-hidden": "true", focusable: "false"
+      });
+      icon.appendChild(svgElement("path", {
+        d: path, fill: "none", stroke: "currentColor",
+        "stroke-width": "1.8", "stroke-linecap": "round",
+        "stroke-linejoin": "round"
+      }));
+      button.appendChild(icon);
+    }
+    iconButton("alignBtn", "M4 3v18 M8 6h12 M8 12h8 M8 18h12",
+      "Aplicar o alinhamento escolhido");
+    iconButton("distributeXBtn",
+      "M3 4v16 M21 4v16 M10 7h4v10h-4z M5 12h3 M16 12h3",
+      "Distribuir horizontalmente");
+    iconButton("distributeYBtn",
+      "M4 3h16 M4 21h16 M7 10h10v4H7z M12 5v3 M12 16v3",
+      "Distribuir verticalmente");
+    $("organizeBtn").title = "Organizar células visíveis em grupos por tipo";
+  }
+
   setupCompactControls();
+  setupEnhancements();
 
   refresh();
   requestAnimationFrame(tick);
