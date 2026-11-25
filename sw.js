@@ -1,26 +1,49 @@
-const CACHE_NAME = "atlas-financeiro-v2";
-const APP_FILES = [
+"use strict";
+
+const CACHE_PREFIX = "organismo-de-tarefas-shell-";
+const CACHE_NAME = CACHE_PREFIX + "v10";
+
+const SHELL = [
+  "./",
   "./index.html",
   "./manifest.json",
-  "./icon_192.png",
-  "./icon_512.png"
+  "./style.css",
+  "./core.js",
+  "./app.js"
+];
+
+const OPTIONAL_ICONS = [
+  "./icon-192.png",
+  "./icon-512.png"
 ];
 
 self.addEventListener("install", event => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(APP_FILES))
-      .then(() => self.skipWaiting())
+      .then(async cache => {
+        await cache.addAll(SHELL);
+
+        await Promise.all(
+          OPTIONAL_ICONS.map(path =>
+            cache.add(path).catch(() => {})
+          )
+        );
+      })
   );
+
+  // A nova versão aguarda o fechamento das telas antigas,
+  // evitando trocar os arquivos no meio de uma sessão.
 });
 
 self.addEventListener("activate", event => {
   event.waitUntil(
     caches.keys()
       .then(keys => Promise.all(
-        keys
-          .filter(key => key.startsWith("atlas-financeiro-") && key !== CACHE_NAME)
-          .map(key => caches.delete(key))
+        keys.filter(key =>
+          (key.startsWith(CACHE_PREFIX) ||
+            key === "organismo-de-tarefas-v6") &&
+          key !== CACHE_NAME
+        ).map(key => caches.delete(key))
       ))
       .then(() => self.clients.claim())
   );
@@ -28,34 +51,28 @@ self.addEventListener("activate", event => {
 
 self.addEventListener("fetch", event => {
   const request = event.request;
-  if (request.method !== "GET" || new URL(request.url).origin !== self.location.origin) return;
+  if (request.method !== "GET") return;
+
+  const url = new URL(request.url);
+  const scope = new URL(self.registration.scope);
+
+  if (url.origin !== scope.origin ||
+      !url.pathname.startsWith(scope.pathname)) return;
 
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request)
-        .then(response => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
-          return response;
-        })
-        .catch(async () => {
-          const cachedPage = await caches.match(request);
-          return cachedPage || caches.match("./index.html");
-        })
+      fetch(request).catch(async () =>
+        await caches.match(
+          new URL("./index.html", scope).href
+        ) || await caches.match(
+          new URL("./", scope).href
+        )
+      )
     );
     return;
   }
 
   event.respondWith(
-    caches.match(request).then(cached => {
-      if (cached) return cached;
-      return fetch(request).then(response => {
-        if (response.ok) {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
-        }
-        return response;
-      });
-    })
+    caches.match(request).then(cached => cached || fetch(request))
   );
 });
